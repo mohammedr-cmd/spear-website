@@ -2,7 +2,7 @@
 
 *Precision before execution. · الدقة قبل التنفيذ.*
 
-The website of Spear Consulting: financial models, feasibility studies, pricing and brand direction for founders and business owners in Saudi Arabia.
+The website of Spear Consulting, live at [rumh.co](https://rumh.co): financial models, feasibility studies, pricing and brand direction for founders and business owners in Saudi Arabia.
 
 ## What's in this repo
 
@@ -27,7 +27,7 @@ The website of Spear Consulting: financial models, feasibility studies, pricing 
 1. **Hosting:** Settings → Pages → Deploy from a branch → `main` / `/ (root)`.
 2. **Booking emails:** the form sends to info@rumh.co through FormSubmit. The first booking triggers a one-time activation email to info@rumh.co. Click it, and every booking after that arrives by email.
 3. **Visitor stats:** GoatCounter. Create a free account at goatcounter.com with the site code `rumh`.
-4. **Domain:** when rumh.co is live, replace `https://mohammedr-cmd.github.io/spear-website/` with `https://rumh.co/` in `index.html` (canonical, og:url, og:image, structured data), `robots.txt` and `sitemap.xml`. Then add the domain under Settings → Pages → Custom domain.
+4. **Domain:** live at [rumh.co](https://rumh.co), registered and managed on Cloudflare (DNS only records pointing to GitHub Pages).
 
 ## Contact
 
