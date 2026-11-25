@@ -3,6 +3,7 @@
 // means "Spear is offline", never a broken screen.
 declare const __API_URL__: string;
 export const API = __API_URL__;
+import { noteResponse } from "./trace";
 
 export class Offline extends Error {}
 export class ApiError extends Error {
@@ -34,33 +35,62 @@ function setOffline(off: boolean) {
   offlineListeners.forEach((f) => f(off));
 }
 
-async function raw(path: string, init: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+// Every request gives up after 5 seconds (docs/web-ui.md: no loading state spins forever). Then a
+// quick health check decides: Spear unreachable (the offline screen), or Spear slow to answer
+// (a named error on that card).
+const WAIT_MS = 5000;
+
+async function reachable(): Promise<boolean> {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const timer = setTimeout(() => ctl.abort(), 2500);
   try {
-    const r = await fetch(API + path, { credentials: "include", ...init, signal: ctl.signal });
-    if (r.status === 530 || r.status === 502 || r.status === 504) {
-      setOffline(true);
-      throw new Offline();
-    }
-    setOffline(false);
-    return r;
-  } catch (e) {
-    if (e instanceof Offline) throw e;
-    setOffline(true);
-    throw new Offline();
+    const r = await fetch(API + "/health", { credentials: "include", signal: ctl.signal });
+    return r.ok;
+  } catch {
+    return false;
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function health(): Promise<boolean> {
+async function raw(path: string, init: RequestInit = {}, timeoutMs = WAIT_MS): Promise<Response> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  let r: Response;
   try {
-    const r = await raw("/health", {}, 5000);
-    return r.ok;
-  } catch {
-    return false;
+    r = await fetch(API + path, { credentials: "include", ...init, signal: ctl.signal });
+  } catch (e) {
+    clearTimeout(timer);
+    if ((e as Error)?.name === "AbortError" && (await reachable())) {
+      throw new ApiError(408, "timeout", "Spear took too long to answer.");
+    }
+    setOffline(true);
+    throw new Offline();
   }
+  clearTimeout(timer);
+  // the tunnel's errors, or a proxy's answer with no Spear body: Spear itself isn't answering
+  const spearBody = (r.headers.get("content-type") ?? "").includes("application/json");
+  if ([502, 503, 504, 530].includes(r.status) || (r.status >= 500 && !spearBody)) {
+    setOffline(true);
+    throw new Offline();
+  }
+  setOffline(false);
+  if (r.status === 401 && !path.startsWith("/auth/")) signedOutListeners.forEach((f) => f());
+  return r;
+}
+
+const signedOutListeners = new Set<() => void>();
+export function onSignedOut(f: () => void) {
+  signedOutListeners.add(f);
+  return () => {
+    signedOutListeners.delete(f);
+  };
+}
+
+export async function health(): Promise<boolean> {
+  const ok = await reachable();
+  if (ok) setOffline(false);
+  return ok;
 }
 
 async function token(): Promise<string> {
@@ -72,7 +102,7 @@ async function token(): Promise<string> {
 
 async function parse<T>(r: Response): Promise<T> {
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new ApiError(r.status, body.error ?? "error", body.message ?? "Something went wrong.");
+  if (!r.ok) throw new ApiError(r.status, body.error ?? kindOf(r.status), body.message ?? "");
   return body as T;
 }
 
@@ -95,10 +125,24 @@ export function resetCsrf() {
   csrf = null;
 }
 
+function kindOf(status: number): string {
+  if (status === 429) return "rate_limited";
+  if (status === 401) return "signed_out";
+  if (status === 403) return "not_allowed";
+  if (status === 404) return "not_found";
+  if (status === 408) return "timeout";
+  return "server_error";
+}
+
 // a tool from the shared tool layer: the same answer, refusal and notes as the Claude connector
 export function tool<T = any>(name: string, args: Record<string, unknown>): Promise<T> {
-  return post<T>(`/tools/${name}`, args).catch((e) => {
-    if (e instanceof ApiError) return { status: "error", error: e.code, message: e.message, notes: [] } as T;
+  return post<T>(`/tools/${name}`, args)
+    .then((r) => {
+      noteResponse(name, r);
+      return r;
+    })
+    .catch((e) => {
+    if (e instanceof ApiError) return { status: "error", error: e.code, http: e.status, message: e.message, notes: [] } as T;
     throw e;
   });
 }

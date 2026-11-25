@@ -14,11 +14,23 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5173,
     strictPort: true,
+    // Windows' file events are missed after some edits, leaving stale modules in the dev app;
+    // polling sees every change
+    watch: { usePolling: true, interval: 300 },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8787",
         changeOrigin: false,
         rewrite: (p) => p.replace(/^\/api/, ""),
+        // the API not running answers as the tunnel does (502), so development shows the same
+        // "Spear is offline" screen as the live site
+        configure: (proxy) => {
+          proxy.on("error", (_err, _req, res) => {
+            const r = res as any; // a Node ServerResponse
+            if (!r.headersSent) r.writeHead(502, { "Content-Type": "text/plain" });
+            r.end("Spear API not reachable");
+          });
+        },
       },
     },
   },

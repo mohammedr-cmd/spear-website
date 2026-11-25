@@ -1,9 +1,12 @@
+import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import { ApiError, get, health, onOffline } from "./api";
+import { ApiError, get, health, onOffline, onSignedOut } from "./api";
 import type { Lang } from "./format";
 import { LangContext, STRINGS } from "./i18n";
 import { Shell } from "./components/Shell";
+import { Boundary } from "./components/Boundary";
+import { PartFailed } from "./components/Bits";
 import { OfflinePage } from "./components/Offline";
 import { Login } from "./screens/Login";
 import { Dashboard } from "./screens/Dashboard";
@@ -13,7 +16,12 @@ import { Compare } from "./screens/Compare";
 import { Market } from "./screens/Market";
 import { Invite, Reset } from "./screens/Public";
 
-export type Me = { email: string; role: "owner" | "member"; can_see_sahmk: boolean };
+export type Me = {
+  email: string;
+  role: "owner" | "member";
+  can_see_sahmk: boolean;
+  display_name: string | null;
+};
 
 function initialLang(): Lang {
   try {
@@ -23,6 +31,15 @@ function initialLang(): Lang {
     /* storage may be unavailable */
   }
   return navigator.language?.startsWith("ar") ? "ar" : "en";
+}
+
+// each page in its own boundary: a failure outside a panel still never blanks the app
+function Page({ name, children }: { name: string; children: React.ReactNode }) {
+  return (
+    <Boundary name={`page ${name}`} fallback={(retry) => <PartFailed retry={retry} />}>
+      {children}
+    </Boundary>
+  );
 }
 
 export default function App() {
@@ -46,6 +63,8 @@ export default function App() {
   }, [lang]);
 
   useEffect(() => onOffline(setOffline), []);
+  // a session that ended mid-use goes back to sign-in, never a broken card
+  useEffect(() => onSignedOut(() => setMe(null)), []);
 
   const refresh = useCallback(async () => {
     if (!(await health())) {
@@ -83,14 +102,14 @@ export default function App() {
       ) : me === undefined ? null : me === null ? (
         <Login onSignedIn={refresh} />
       ) : (
-        <Shell me={me} onSignedOut={() => setMe(null)}>
+        <Shell me={me} onSignedOut={() => setMe(null)} onName={(display_name) => setMe({ ...me, display_name })}>
           <Routes>
-            <Route path="/" element={<Dashboard me={me} />} />
-            <Route path="/statements" element={<Statements me={me} />} />
-            <Route path="/statements/:symbol" element={<Statements me={me} />} />
-            <Route path="/compare" element={<Compare />} />
-            <Route path="/chat" element={<Chat me={me} />} />
-            <Route path="/market" element={me.can_see_sahmk ? <Market /> : <Navigate to="/" />} />
+            <Route path="/" element={<Page name="/"><Dashboard me={me} /></Page>} />
+            <Route path="/statements" element={<Page name="/statements"><Statements me={me} /></Page>} />
+            <Route path="/statements/:symbol" element={<Page name="/statements/:symbol"><Statements me={me} /></Page>} />
+            <Route path="/compare" element={<Page name="/compare"><Compare /></Page>} />
+            <Route path="/chat" element={<Page name="/chat"><Chat me={me} /></Page>} />
+            <Route path="/market" element={me.can_see_sahmk ? <Page name="/market"><Market /></Page> : <Navigate to="/" />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Shell>

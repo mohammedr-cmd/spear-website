@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { imageUrl, tool } from "../api";
 import { day } from "../format";
 import { useLang } from "../i18n";
-import { D, Fig, Loading, Notes, Price, WhyNot } from "./Bits";
+import { BiText, D, Fig, Loading, Notes, Originals, Price, TAGS, WhyNot, docLabel, tagsOf, type Bi } from "./Bits";
 
 export type FactRow = {
   fact_id: number;
@@ -12,11 +12,14 @@ export type FactRow = {
   value: string;
   scale: number | null;
   document: string;
+  document_text?: Bi;
   page: number;
   method: string;
   location_status: string;
   includes: string | null;
+  includes_text?: Bi;
   restated: string | null;
+  restated_text?: Bi;
   reports_differ: boolean;
   differs_from_original: boolean;
   ocr_agreement: string | null;
@@ -69,6 +72,7 @@ export function SourcePanel({
         </button>
       </div>
       <div className="panel-body">
+        <Originals>
         <div className="heading">{itemName}</div>
         <div className="small muted">
           <D>{day(row.period_end, lang)}</D>
@@ -78,9 +82,9 @@ export function SourcePanel({
         </div>
         <dl className="kv">
           <dt>{t.asPrinted}</dt>
-          <dd className="ltr-block" lang="en">{d?.printed ?? "…"}</dd>
+          <dd><bdi className="num">{d?.printed ?? "…"}</bdi></dd>
           <dt>{t.document}</dt>
-          <dd className="ltr-block" lang="en">{row.document}</dd>
+          <dd title={row.document}>{docLabel({ ...row, page: null }, lang)}</dd>
           <dt>{t.page}</dt>
           <dd><bdi className="num">{row.page}</bdi></dd>
           <dt>{t.checked}</dt>
@@ -96,12 +100,25 @@ export function SourcePanel({
             ) : null}
           </dd>
         </dl>
-        <div className="chips" style={{ marginBottom: 12 }}>
-          {row.restated && <span className="chip">{t.restated}</span>}
-          {row.includes && <span className="chip">{t.includes}: {row.includes}</span>}
-          {row.reports_differ && <span className="chip">{t.reportsDiffer}</span>}
-        </div>
-        {row.restated && <p className="small ltr-block" lang="en">{row.restated}</p>}
+        {tagsOf(row).length > 0 && (
+          <ul className="fig-notes">
+            {row.restated && (
+              <li>
+                <span className="tag">{TAGS.restated[lang]}</span> <BiText t={row.restated_text ?? { en: row.restated, ar: null }} />
+              </li>
+            )}
+            {row.includes && (
+              <li>
+                <span className="tag">{TAGS.includes[lang]}</span> <BiText t={row.includes_text ?? { en: row.includes, ar: null }} />
+              </li>
+            )}
+            {row.reports_differ && (
+              <li>
+                <span className="tag">{TAGS.differs[lang]}</span> {TAGS.differs.why[lang]}
+              </li>
+            )}
+          </ul>
+        )}
         {!src ? (
           <Loading />
         ) : d?.page_image ? (
@@ -110,7 +127,7 @@ export function SourcePanel({
               <img className="row-crop" src={imageUrl(d.row_image)} alt={`${itemName}, ${t.asPrinted}`} />
             )}
             <a href={imageUrl(d.page_image)} target="_blank" rel="noopener">
-              <img src={imageUrl(d.page_image)} alt={`${row.document}, ${t.page} ${row.page}`} loading="lazy" />
+              <img src={imageUrl(d.page_image)} alt={docLabel(row, lang)} loading="lazy" />
             </a>
             <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               <a className="btn" href={imageUrl(d.page_image)} target="_blank" rel="noopener">
@@ -129,6 +146,7 @@ export function SourcePanel({
         <div style={{ marginTop: 12 }}>
           <Notes res={src} />
         </div>
+        </Originals>
       </div>
     </aside>
   );

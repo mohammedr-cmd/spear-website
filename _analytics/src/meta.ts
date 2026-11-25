@@ -30,7 +30,12 @@ export type Sector = {
 };
 
 let cache: Promise<{ sectors: Sector[] }> | null = null;
-export const meta = () => (cache ??= get<{ sectors: Sector[] }>("/meta"));
+// a failed request is not kept: the next page asks again
+export const meta = () =>
+  (cache ??= get<{ sectors: Sector[] }>("/meta").catch((e) => {
+    cache = null;
+    throw e;
+  }));
 
 export const nameOf = (x: { name_en: string; name_ar: string | null } | undefined, lang: Lang, fallback = "") =>
   x ? (lang === "ar" ? x.name_ar ?? x.name_en : x.name_en) : fallback;

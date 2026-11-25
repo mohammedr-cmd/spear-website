@@ -1,21 +1,29 @@
-import { useState, type FormEvent } from "react";
-import { ApiError, post } from "../api";
+import { useEffect, useState, type FormEvent } from "react";
+import { ApiError, get, post } from "../api";
 import { useLang } from "../i18n";
 import { PublicFrame } from "./Login";
 
 // The invitation link carries its token after "#", so it never reaches a server log.
 export function Invite() {
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const token = window.location.hash.slice(1);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  // the name the owner typed, which the invitee can change here
+  useEffect(() => {
+    if (!token) return;
+    get<{ display_name: string | null }>(`/auth/invite/info?token=${encodeURIComponent(token)}`)
+      .then((r) => setName(r.display_name ?? ""))
+      .catch(() => {});
+  }, [token]);
   async function submit(e: FormEvent) {
     e.preventDefault();
     setErr("");
     try {
-      await post("/auth/invite/accept", { token, email, password });
+      await post("/auth/invite/accept", { token, email, password, display_name: name });
       setMsg(t.accountReady);
       history.replaceState(null, "", "/invite");
     } catch (x) {
@@ -39,6 +47,10 @@ export function Invite() {
             <div className="field">
               <label htmlFor="iemail">{t.email}</label>
               <input id="iemail" type="email" dir="ltr" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            </div>
+            <div className="field">
+              <label htmlFor="iname">{lang === "ar" ? "الاسم المعروض (اختياري)" : "Display name (optional)"}</label>
+              <input id="iname" dir="auto" maxLength={60} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="field">
               <label htmlFor="ipw">{t.password}</label>

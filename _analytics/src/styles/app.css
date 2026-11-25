@@ -483,7 +483,7 @@ td.cell-btn button.sel {
   margin: 0;
 }
 .sheet-close {
-  display: none;
+  display: inline-flex;
 }
 
 /* -- chat: a full page ---------------------------------------------------------------------- */
@@ -624,6 +624,138 @@ main.full > .wrap {
 .signed-line {
   margin-top: 0;
   margin-bottom: 0;
+}
+/* chat: progress, figure cards and source chips (Mo, 26 Nov 2026) */
+.chat-progress ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.chat-progress li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--ink-muted);
+}
+.chat-progress li.current {
+  color: var(--ink);
+  font-weight: 600;
+}
+.step-mark {
+  width: 14px;
+  flex: none;
+  text-align: center;
+}
+.chat-progress li.current .step-mark::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--ink);
+}
+.dots::after {
+  content: "...";
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  width: 0;
+  animation: chat-dots 1.2s steps(4, end) infinite;
+}
+@keyframes chat-dots {
+  to {
+    width: 1.1em;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dots::after {
+    animation: none;
+    width: auto;
+  }
+}
+.src-chip {
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper-raised);
+  color: var(--ink);
+  cursor: pointer;
+  border-radius: var(--radius-none);
+  text-align: start;
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.src-chip:hover,
+.src-chip:focus-visible {
+  border-color: var(--ink);
+}
+.fig-inline strong {
+  font-weight: 600;
+}
+.fig-inline .src-chip {
+  font-weight: 400;
+  margin: 0 2px;
+}
+.fig-n {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  margin-inline-start: 2px;
+}
+.fig-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.fig-card {
+  position: relative;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.fig-card > .fig-n {
+  position: absolute;
+  inset-inline-end: 8px;
+  top: 6px;
+}
+.fig-amount {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  margin-inline-end: 18px;
+  overflow-wrap: anywhere;
+}
+.fig-card .small {
+  overflow-wrap: anywhere;
+}
+.fig-card .chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.chat-switch {
+  margin-inline-start: auto;
+}
+.replay-bar {
+  margin-bottom: var(--space-2);
+}
+.read-as {
+  margin-bottom: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+.more-chips {
+  font-size: 12px;
+  padding: 1px 4px;
 }
 .chat-source {
   position: absolute;
@@ -1044,4 +1176,386 @@ main.full > .wrap {
   font-size: var(--body-size);
   line-height: var(--body-line);
   font-weight: 400;
+}
+
+/* one "English original" toggle per card, at the card's foot */
+.orig-card {
+  display: block;
+  margin: 0 var(--space-2) 12px;
+}
+.card .orig-card {
+  margin: 10px 0 0;
+}
+.panel-body .orig-card {
+  margin: 10px 0 0;
+}
+/* the full SAHMK line, once per page */
+.page-foot {
+  margin-top: var(--space-3);
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.sector-note {
+  margin: 0;
+  padding: 10px var(--space-2) 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* paged tables: whole columns only, nothing scrolls sideways, nothing is cut (Mo, 25 Nov 2026) */
+.paged {
+  width: 100%;
+  overflow: hidden;
+}
+table.fit {
+  table-layout: fixed;
+  width: 100%;
+}
+table.fit th:first-child,
+table.fit td:first-child {
+  position: static;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+table.fit td[data-fig],
+table.fit th[data-fig] {
+  overflow: hidden;
+}
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--paper-raised);
+}
+.pager-buttons {
+  display: flex;
+  gap: 8px;
+}
+.pager button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.split.closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 4px;
+}
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+td.cell-btn button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.legend {
+  margin: 0;
+}
+.panel-body.tight {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+.panel-body.tight:empty {
+  display: none;
+}
+.fig-notes {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 14px;
+}
+.fig-notes li {
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+/* compare: selected choices read at a glance; the table says when it is updating */
+.pick.on {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+.pick.on::before {
+  content: "✓ ";
+}
+.run-status {
+  margin: 0;
+  color: var(--ink-muted);
+}
+.run-status.blocked {
+  color: var(--ink-muted); /* signal-down is for negative figures only */
+  font-weight: 600;
+}
+.panel.updating {
+  position: relative;
+}
+.panel.updating table {
+  opacity: 0.4;
+}
+.updating-label {
+  position: absolute;
+  top: 8px;
+  inset-inline-end: 8px;
+  z-index: 2;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 2px 8px;
+}
+.total-scope {
+  white-space: normal;
+  text-align: end;
+  margin-top: 4px;
+}
+.missing-once {
+  font-size: 14px;
+}
+/* phone: the dashboard's company table as stacked rows, so no cell is ever cut */
+@media (max-width: 860px) {
+  table.banks {
+    min-width: 0;
+  }
+  table.banks thead {
+    display: none;
+  }
+  table.banks tr {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  table.banks td {
+    border: none;
+    padding: 0;
+    text-align: start;
+  }
+  table.banks td.fig {
+    text-align: end;
+  }
+  table.banks td:nth-child(4) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* the logo in the theme's colour (Mo, 25 Nov 2026) */
+.logo-on-ink {
+  display: none !important;
+}
+:root[data-theme="ink"] .logo-on-paper {
+  display: none !important;
+}
+:root[data-theme="ink"] .logo-on-ink {
+  display: block !important;
+}
+
+/* the price chart: ink line, hairline grid, no fill, no gradient (Mo, 25 Nov 2026) */
+.chart-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+@media (max-width: 860px) {
+  .chart-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.seg.ranges button {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.pchart {
+  position: relative;
+  width: 100%;
+  user-select: none;
+}
+.pchart svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.pchart .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.pchart .axis {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.pchart .data-line {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.pchart .guide {
+  stroke: var(--ink-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.pchart .hover-dot,
+.pchart .last-dot {
+  fill: var(--ink);
+  stroke: var(--paper-raised);
+  stroke-width: 2;
+}
+.pchart .mark-dot {
+  fill: var(--paper-raised);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.pchart .ptick,
+.pchart .ttick,
+.pchart .plabel {
+  position: absolute;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.pchart .ptick {
+  text-align: end;
+}
+.pchart .ttick {
+  transform: translateX(-50%);
+}
+.pchart .plabel.latest {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 12px;
+}
+.pchart .plabel.hl {
+  transform: translateX(-50%);
+  color: var(--ink);
+}
+.pchart-hit {
+  position: absolute;
+  touch-action: pan-y;
+  cursor: crosshair;
+}
+.pchart-hit:focus-visible {
+  outline: 1px dashed var(--ink-muted);
+}
+.hover-card {
+  position: absolute;
+  width: 150px;
+  background: var(--paper-raised);
+  border: 1px solid var(--line-strong);
+  padding: 6px 10px;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 3;
+}
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: 8px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  font: inherit;
+}
+.close-table {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+}
+
+/* the greeting: one line, the sans face, above the headline (Mo, 25 Nov 2026) */
+.greeting {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 24px;
+  margin: 0 0 8px;
+  color: var(--ink);
+}
+:root[lang="ar"] .greeting {
+  font-family: var(--font-arabic);
+}
+.profile {
+  position: relative;
+}
+.profile-menu {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  width: 280px;
+  z-index: 50;
+  background: var(--paper-raised);
+  border: 1px solid var(--line-strong);
+  padding: 14px;
+}
+
+.table-caption {
+  margin: 0;
+  padding: 10px var(--space-2) 0;
+}
+@media (max-width: 860px) {
+  /* the header's tools fit a phone in both languages */
+  .header .tools {
+    gap: 2px;
+  }
+  .tools button {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+  :root[lang="ar"] .tools button {
+    font-size: 12px;
+    padding: 4px 5px;
+  }
+  .lockup img {
+    height: 18px;
+  }
+  /* the dividends table at phone width: the period wraps, nothing is cut */
+  .scroll table:not(.banks):not(.stmt) td,
+  .scroll table:not(.banks):not(.stmt) th {
+    padding: 8px 8px;
+    white-space: normal;
+  }
+}
+
+/* the market search's suggestions, under the box */
+.suggest-wrap {
+  position: relative;
+}
+.results.suggest {
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + 2px);
+  z-index: 20;
+  margin: 0;
+  max-height: 320px;
+}
+
+/* compare at phone width: the item heads its row */
+tr.item-head td {
+  background: var(--paper-sunken);
+  font-weight: 600;
+  padding-top: 8px;
+  padding-bottom: 6px;
 }

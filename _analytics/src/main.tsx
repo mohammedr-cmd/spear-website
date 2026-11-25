@@ -5,11 +5,17 @@ import "./styles/tokens.css";
 import "./styles/thmanyah.css";
 import "./styles/app.css";
 import App from "./App";
+import { AppBoundary } from "./components/AppBoundary";
+import { watchActions } from "./trace";
+
+watchActions();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <AppBoundary>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </AppBoundary>
   </React.StrictMode>,
 );

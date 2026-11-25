@@ -92,12 +92,14 @@ export function day(iso: string | null | undefined, lang: Lang): string {
   return lang === "ar" ? `${d} ${MONTHS_AR[m - 1]} ${y}` : `${d} ${MONTHS_EN[m - 1]} ${y}`;
 }
 
+const QUARTER_AR = ["الأول", "الثاني", "الثالث", "الرابع"];
+
 export function period(iso: string, months: number | null, lang: Lang): string {
   const [y, m] = iso.slice(0, 10).split("-").map(Number);
   if (!months) return lang === "ar" ? `${day(iso, "ar")}` : day(iso, "en");
   if (months === 12) return lang === "ar" ? `السنة المالية ${y}` : `FY${y}`;
   const q = Math.round(m / 3);
-  if (months === 3) return lang === "ar" ? `الربع ${q} ${y}` : `Q${q} ${y}`;
+  if (months === 3) return lang === "ar" ? `الربع ${QUARTER_AR[q - 1]} ${y}` : `Q${q} ${y}`;
   return lang === "ar" ? `${months} أشهر حتى ${day(iso, "ar")}` : `${months}M to ${day(iso, "en")}`;
 }
 

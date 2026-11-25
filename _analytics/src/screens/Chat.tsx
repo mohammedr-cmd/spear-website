@@ -1,151 +1,219 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { tool } from "../api";
-import { day, unit, type Lang } from "../format";
+import { ApiError, get, post } from "../api";
+import { day, type Lang } from "../format";
 import { useLang } from "../i18n";
-import { meta, nameOf, type Sector } from "../meta";
-import { Fig, NotAnswered } from "../components/Bits";
+import { NotAnswered, docLabel } from "../components/Bits";
 import { SourcePanel, type FactRow } from "../components/SourcePanel";
 import type { Me } from "../App";
 
-// Chat, a full page: earlier questions by day in a side column (a drawer at phone width), each
-// question as a dark bubble, each answer as a card with its main figure large and its sources,
-// a refusal as its own "Not answered" card, and the ask box fixed at the bottom. The model is
-// connected in build step 4 and stays off until it passes the benchmark gate (docs/web-ui.md
-// section 6.2): until the API says chat is on, the page shows that plainly.
+// Chat, a full page (docs/web-ui.md section 6; Mo, 26 Nov 2026). The owner's account only, behind
+// the owner's switch; members see "coming soon". The API refuses to switch chat on while the
+// company-and-period reader isn't merged, or while the instruction text differs from the one that
+// passed the benchmark: the page then says why, plainly.
+//
+// A question runs on the server as a job. The page polls it and shows each step as it happens
+// (reading the question, looking up the company, reading the statement, checking every figure),
+// then the answer: Spear's text with each figure Spear rendered drawn as a figure card, and each
+// source as a chip that opens the boxed page. A host that is unavailable or rate-limited gives
+// "Chat is temporarily unavailable, please try again" at once, with a retry; never an error page.
 
-type Answer = {
-  kind: "answer";
+type Status = { on: boolean; state: string; why: string | null; switch?: boolean; can_switch_on?: boolean };
+type Cell = FactRow & { symbol?: string };
+type Figure = { n: number; ref: string; type: string; text: string; cells: Cell[] };
+type Segment = { text: string; ref?: string; n?: number };
+type Card = {
+  kind: "answer" | "not_answered" | "clarify" | "market_page";
+  reason: string | null;
   lang: Lang;
-  row: FactRow;
-  item: string;
-  company: string;
-  sentence: string;
+  text: string;
+  segments?: Segment[];
+  figures?: Figure[];
+  notes?: string[];
+  read_as?: ReadAs;
 };
-type Refusal = { kind: "refusal"; lang: Lang; reason: string; instead: string };
-type Exchange = { q: string; a: Answer | Refusal | null };
-type Past = { q: string; at: string };
+type ReadAs = {
+  companies: { symbol: string; name_en: string; name_ar: string }[];
+  sector: string | null;
+  periods: { period_end: string; months: number | null; en: string; ar: string }[];
+  unstated: string[];
+};
+type JobView = { id: string; status: "running" | "done"; question: string; steps: string[]; seconds: number; card?: Card };
+type Exchange = { q: string; job?: JobView; card?: Card; unavailable?: boolean; replay?: boolean };
 
 const ARABIC = /[؀-ۿ]/;
 // an Arabic question gets an Arabic answer, right to left, whatever the page's language
 export const answerLang = (q: string): Lang => (ARABIC.test(q) ? "ar" : "en");
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgo = (n: number) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+const STEPS: Record<string, [string, string]> = {
+  question: ["Reading your question", "قراءة سؤالك"],
+  scope: ["Finding the company and period", "تحديد الشركة والفترة"],
+  company: ["Looking up the company", "البحث عن الشركة"],
+  coverage: ["Checking which reports Spear holds", "التحقق من التقارير المتاحة في سبير"],
+  item: ["Finding the line item", "تحديد البند"],
+  statement: ["Reading the statement", "قراءة القائمة المالية"],
+  compare: ["Comparing the companies", "مقارنة الشركات"],
+  source: ["Finding the page", "تحديد الصفحة"],
+  tool: ["Using Spear's tools", "استخدام أدوات سبير"],
+  checking: ["Checking every figure against Spear's data", "مطابقة كل رقم ببيانات سبير"],
+  correcting: ["Correcting the draft", "تصحيح المسودة"],
+};
 
-function latest(rows: FactRow[], code: string): FactRow | null {
-  return rows.filter((r) => r.line_item_code === code).sort((a, b) => (a.period_end < b.period_end ? 1 : -1))[0] ?? null;
-}
+const OFF: Record<string, { title: [string, string]; body: [string, string] }> = {
+  coming_soon: {
+    title: ["Chat is coming soon.", "المحادثة قريبًا."],
+    body: [
+      "It's being tested before it opens. Until then, every figure is on the Statements, Compare and Market pages.",
+      "تُختبر قبل فتحها. وإلى ذلك الحين، كل الأرقام في صفحات القوائم المالية والمقارنة والسوق.",
+    ],
+  },
+  reader_missing: {
+    title: ["Chat is off until the company-and-period reader is merged.", "المحادثة متوقفة حتى دمج قارئ الشركة والفترة."],
+    body: [
+      "The reader tells the check which companies and periods a question asks about, so no figure from another company or period gets through. Until it is merged, chat stays off for your account too, and nothing is sent to the model.",
+      "يحدّد القارئ للفحص الشركات والفترات التي يسأل عنها السؤال، فلا يمر رقم لشركة أو فترة أخرى. وإلى أن يُدمج، تبقى المحادثة متوقفة لحسابك أيضًا، ولا يُرسل شيء إلى النموذج.",
+    ],
+  },
+  text_changed: {
+    title: ["Chat is off: its instruction text changed.", "المحادثة متوقفة: تغيّر نص تعليماتها."],
+    body: [
+      "The text differs from the one that passed the benchmark. Run the benchmark's 500 again before chat can be switched on.",
+      "يختلف النص عن النص الذي اجتاز اختبار الدقة. أعد تشغيل أسئلة الاختبار الخمسمئة قبل تفعيل المحادثة.",
+    ],
+  },
+  switched_off: {
+    title: ["Chat is off for your account.", "المحادثة متوقفة لحسابك."],
+    body: [
+      "Switch it on to ask questions. It's for your account only; members see “coming soon”.",
+      "فعّلها لتطرح الأسئلة. وهي لحسابك فقط؛ ويرى الأعضاء «قريبًا».",
+    ],
+  },
+  no_key: {
+    title: ["Chat is off: the chat model's key isn't set on this PC.", "المحادثة متوقفة: مفتاح نموذج المحادثة غير مضبوط على هذا الجهاز."],
+    body: ["Set OPENROUTER_API_KEY for the Spear service, then restart it.", "اضبط OPENROUTER_API_KEY لخدمة سبير ثم أعد تشغيلها."],
+  },
+};
+
+const UNAVAILABLE: [string, string] = ["Chat is temporarily unavailable, please try again", "المحادثة غير متاحة مؤقتًا، يُرجى المحاولة مرة أخرى"];
+const RETRY: [string, string] = ["Try again", "إعادة المحاولة"];
+const NOT_ANSWERED_PREFIX = /^(Not answered|لم تتم الإجابة)\s*:\s*/;
+const POLL_MS = 700;
+const POLL_GIVE_UP = 3; // failed polls in a row before "temporarily unavailable"
+const LONGEST_MS = 6 * 60_000;
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export function Chat({ me }: { me: Me }) {
   const { t, lang } = useLang();
+  const ar = lang === "ar";
   const [params] = useSearchParams();
-  const asked = params.get("q") ?? "";
-  // development only: the page's layout with real figures, for Mo's review (never in the built site)
-  const preview = import.meta.env.DEV && params.get("preview") === "1";
-  const [live, setLive] = useState(false);
-  const [sectors, setSectors] = useState<Sector[]>([]);
+  // development only: replay recorded benchmark turns through the web's card (no model call)
+  const replays = import.meta.env.DEV ? (params.get("replay") ?? "").split(",").filter(Boolean) : [];
+  const [status, setStatus] = useState<Status | null>(null);
+  const [statusFailed, setStatusFailed] = useState(false);
   const [thread, setThread] = useState<Exchange[]>([]);
-  const [past, setPast] = useState<Past[]>([]);
+  const [past, setPast] = useState<{ q: string; at: string }[]>([]);
   const [drawer, setDrawer] = useState(false);
   const [src, setSrc] = useState<{ row: FactRow; item: string } | null>(null);
-  const [q, setQ] = useState(asked);
+  const [q, setQ] = useState(params.get("q") ?? "");
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState("");
+  const busy = thread.some((x) => !x.card && !x.unavailable);
 
-  useEffect(() => {
-    meta()
-      .then((m: any) => {
-        setSectors(m.sectors);
-        setLive(Boolean(m.chat?.on));
-      })
-      .catch(() => {});
-  }, []);
+  function loadStatus() {
+    setStatusFailed(false);
+    get<Status>("/chat/status")
+      .then(setStatus)
+      .catch(() => setStatusFailed(true));
+  }
+  useEffect(loadStatus, []);
 
-  // the preview's exchanges: real figures from the tool layer, sentences written for the preview
-  useEffect(() => {
-    if (!preview || !sectors.length) return;
-    const banks = sectors[0];
-    const itemName = (code: string, l: Lang) => nameOf(banks.items.find((i) => i.code === code), l, code);
-    const coName = (sym: string, l: Lang) => nameOf(banks.members.find((m) => m.symbol === sym), l, sym);
-    Promise.all([
-      tool("get_financials", { symbol: "1180", statement: "BS" }),
-      tool("get_financials", { symbol: "1010", statement: "BS" }),
-    ])
-      .then(([a, b]) => {
-        const ta = latest(a.data ?? [], "total_assets");
-        const cd = latest(b.data ?? [], "customer_deposits");
-        const mk = (row: FactRow | null, sym: string, code: string, l: Lang, sentence: (r: FactRow) => string): Answer | null =>
-          row ? { kind: "answer", lang: l, row, item: itemName(code, l), company: coName(sym, l), sentence: sentence(row) } : null;
-        const en = lang === "en";
-        const q1 = en ? "What were SNB's total assets at the latest quarter end?" : "ما إجمالي موجودات البنك الأهلي السعودي في آخر ربع؟";
-        const q2 = en ? "ما إجمالي ودائع العملاء لبنك الرياض في آخر ربع؟" : "What were Riyad Bank's customer deposits at the latest quarter end?";
-        const q3 = en ? "What is Al Rajhi's dividend yield?" : "ما عائد التوزيعات لمصرف الراجحي؟";
-        const l1 = answerLang(q1);
-        const l2 = answerLang(q2);
-        const l3 = answerLang(q3);
-        setThread([
-          {
-            q: q1,
-            a: mk(ta, "1180", "total_assets", l1, (r) =>
-              l1 === "ar"
-                ? `بلغ إجمالي موجودات البنك الأهلي السعودي في ${day(r.period_end, "ar")} الرقم المبيّن بآلاف الريالات، كما ورد في قوائمه المعتمدة.`
-                : `SNB's total assets at ${day(r.period_end, "en")}, in SAR thousands, as printed in its signed-off statements.`,
-            ),
-          },
-          {
-            q: q2,
-            a: mk(cd, "1010", "customer_deposits", l2, (r) =>
-              l2 === "ar"
-                ? `بلغت ودائع العملاء لبنك الرياض في ${day(r.period_end, "ar")} الرقم المبيّن بآلاف الريالات، كما ورد في قوائمه المعتمدة.`
-                : `Riyad Bank's customer deposits at ${day(r.period_end, "en")}, in SAR thousands, as printed in its signed-off statements.`,
-            ),
-          },
-          {
-            q: q3,
-            a: {
-              kind: "refusal",
-              lang: l3,
-              reason:
-                l3 === "ar"
-                  ? "بيانات الأسعار والتوزيعات وعوائدها من سهمك غير متاحة في المحادثة؛ تجدها في صفحة السوق."
-                  : "SAHMK price, dividend and yield data isn't available in chat; it's on the Market page.",
-              instead:
-                l3 === "ar"
-                  ? "عن قوائم مصرف الراجحي المالية، مثل صافي دخله لعام 2025."
-                  : "about Al Rajhi's statements, for example its net income for 2025.",
-            },
-          },
-        ]);
-        setPast([
-          { q: q1, at: todayIso() },
-          { q: q2, at: todayIso() },
-          { q: q3, at: todayIso() },
-          { q: en ? "Compare loans to deposits for four banks at 30 June 2026" : "قارن نسبة القروض إلى الودائع لأربعة بنوك في 30 يونيو 2026", at: daysAgo(1) },
-          { q: en ? "Alinma's net income for 2025" : "صافي دخل مصرف الإنماء لعام 2025", at: daysAgo(1) },
-        ]);
-      })
-      .catch(() => {});
-  }, [preview, sectors, lang]);
-
-  // the thread opens at its first exchange; a new answer scrolls the thread, never the page
+  // a new answer scrolls the thread, never the page
   const threadRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = threadRef.current;
-    if (el && thread.length && !preview) el.scrollTop = el.scrollHeight;
-  }, [thread, preview]);
+    if (el && thread.length) el.scrollTop = el.scrollHeight;
+  }, [thread]);
 
-  const on = live || preview;
-  const groups = past.reduce<{ label: string; items: Past[] }[]>((acc, p) => {
-    const label = p.at === todayIso() ? t.today : day(p.at, lang);
-    const g = acc.find((x) => x.label === label);
-    if (g) g.items.push(p);
-    else acc.push({ label, items: [p] });
-    return acc;
+  // false once the page is left, so a running poll stops (set again on mount: React runs
+  // effects twice in development)
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
   }, []);
-
+  function update(i: number, patch: Partial<Exchange>) {
+    if (live.current) setThread((th) => th.map((x, k) => (k === i ? { ...x, ...patch } : x)));
+  }
+  // one question's job, polled until its card arrives
+  async function follow(i: number, job: JobView) {
+    const t0 = Date.now();
+    let failed = 0;
+    while (live.current) {
+      if (job.status === "done" && job.card) return update(i, { job, card: job.card });
+      if (Date.now() - t0 > LONGEST_MS) return update(i, { job, unavailable: true });
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      try {
+        job = await get<JobView>(`/chat/jobs/${job.id}`);
+        failed = 0;
+        update(i, { job });
+      } catch (e) {
+        if ((e instanceof ApiError && e.status === 404) || ++failed >= POLL_GIVE_UP) return update(i, { unavailable: true });
+      }
+    }
+  }
+  async function ask(question: string, replay?: string) {
+    const i = thread.length;
+    setThread((th) => [...th, { q: question, replay: Boolean(replay) }]);
+    try {
+      const job = await post<JobView>("/chat/ask", replay ? { replay: Number(replay) } : { question });
+      update(i, { q: job.question, job });
+      setPast((p) => [{ q: job.question, at: todayIso() }, ...p]);
+      follow(i, job);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) loadStatus();
+      update(i, { unavailable: true });
+    }
+  }
   function submit(e: FormEvent) {
     e.preventDefault();
-    // the model client arrives in build step 4; nothing is sent until then
+    const text = q.trim();
+    if (!text || !status?.on || busy) return;
+    setQ("");
+    ask(text);
   }
+  async function setSwitch(on: boolean) {
+    setSwitching(true);
+    setSwitchError("");
+    try {
+      await post("/owner/settings", { chat_owner_on: on });
+    } catch (e) {
+      setSwitchError(e instanceof ApiError && e.message ? e.message : UNAVAILABLE[ar ? 1 : 0]);
+    } finally {
+      setSwitching(false);
+      loadStatus();
+    }
+  }
+
+  const on = Boolean(status?.on);
+  const isOwner = me.role === "owner";
+  const groups = past.reduce<{ label: string; items: string[] }[]>((acc, p) => {
+    const label = p.at === todayIso() ? t.today : day(p.at, lang);
+    const g = acc.find((x) => x.label === label);
+    if (g) g.items.push(p.q);
+    else acc.push({ label, items: [p.q] });
+    return acc;
+  }, []);
+  const off = status && !on ? (OFF[status.why ?? ""] ?? OFF.coming_soon) : null;
+  const askWhy = on
+    ? busy
+      ? ar
+        ? "يُجاب عن السؤال السابق الآن."
+        : "The last question is still being answered."
+      : t.signedOffLine
+    : `${off ? off.title[ar ? 1 : 0] : t.chatOff} ${t.signedOffLine}`;
 
   return (
     <div className="chat-page">
@@ -153,7 +221,8 @@ export function Chat({ me }: { me: Me }) {
         <div className="history-head">
           <button
             className="primary new-q"
-            disabled={!on}
+            disabled={!on || busy}
+            aria-describedby="ask-why"
             onClick={() => {
               setThread([]);
               setQ("");
@@ -172,8 +241,8 @@ export function Chat({ me }: { me: Me }) {
               <h3 className="eyebrow">{g.label}</h3>
               <ul>
                 {g.items.map((p, i) => (
-                  <li key={i} dir="auto" lang={answerLang(p.q)}>
-                    {p.q}
+                  <li key={i} dir="auto" lang={answerLang(p)} data-allow-en={answerLang(p) === "en" ? "" : undefined}>
+                    {p}
                   </li>
                 ))}
               </ul>
@@ -191,13 +260,53 @@ export function Chat({ me }: { me: Me }) {
             ☰ {t.earlier}
           </button>
           <span className="eyebrow">{t.chat}</span>
+          {isOwner && on && status?.switch && (
+            <button className="quiet small chat-switch" onClick={() => setSwitch(false)} disabled={switching || busy}>
+              {ar ? "إيقاف المحادثة لحسابي" : "Switch chat off for my account"}
+            </button>
+          )}
         </div>
         <div className="thread" ref={threadRef}>
-          {!on ? (
+          {replays.length > 0 && (
+            <div className="notice small replay-bar">
+              <p style={{ margin: "0 0 8px" }}>
+                {ar
+                  ? "للتطوير فقط: إجابات مسجّلة من اختبار الدقة، تُعاد عبر بطاقة الموقع. لا يُستدعى أي نموذج، والمحادثة متوقفة."
+                  : "Development only: recorded benchmark answers, replayed through the web's card. No model is called, and chat stays off."}
+              </p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {replays.map((r) => (
+                  <button key={r} className="btn" disabled={busy} onClick={() => ask("", r)}>
+                    {ar ? `إعادة السؤال المسجّل ${r}` : `Replay recorded question ${r}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {statusFailed ? (
+            <div className="chat-off">
+              <h1 className="title">{UNAVAILABLE[ar ? 1 : 0]}</h1>
+              <button className="btn" onClick={loadStatus}>
+                {RETRY[ar ? 1 : 0]}
+              </button>
+            </div>
+          ) : off && !thread.length ? (
             <div className="chat-off">
               <span className="eyebrow">{t.chat}</span>
-              <h1 className="title">{t.chatOff}</h1>
-              <p>{t.chatOffBody}</p>
+              <h1 className="title">{off.title[ar ? 1 : 0]}</h1>
+              <p>{off.body[ar ? 1 : 0]}</p>
+              {isOwner && status?.why === "switched_off" && status.can_switch_on && (
+                <p>
+                  <button className="primary" onClick={() => setSwitch(true)} disabled={switching}>
+                    {ar ? "تفعيل المحادثة لحسابي" : "Switch chat on for my account"}
+                  </button>
+                </p>
+              )}
+              {switchError && (
+                <p className="small" role="status">
+                  {switchError}
+                </p>
+              )}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Link className="btn" to="/statements">
                   {t.statements}
@@ -213,30 +322,27 @@ export function Chat({ me }: { me: Me }) {
               </div>
             </div>
           ) : (
-            <>
-              {preview && <p className="notice small">{t.previewNote}</p>}
-              {thread.map((x, i) => (
-                <div key={i} className="exchange">
-                  <div className="bubble" dir="auto" lang={answerLang(x.q)}>
+            thread.map((x, i) => (
+              <div key={i} className="exchange">
+                {x.q && (
+                  <div className="bubble" dir="auto" lang={answerLang(x.q)} data-allow-en={answerLang(x.q) === "en" ? "" : undefined}>
                     {x.q}
                   </div>
-                  {x.a?.kind === "answer" && <AnswerCard a={x.a} onSource={(row, item) => setSrc({ row, item })} />}
-                  {x.a?.kind === "refusal" && (
-                    <div dir={x.a.lang === "ar" ? "rtl" : "ltr"} lang={x.a.lang} className="answer-slot">
-                      <NotAnswered
-                        reason={x.a.reason}
-                        instead={
-                          <>
-                            <strong>{x.a.lang === "ar" ? "اسأل بدلًا من ذلك" : "Ask instead"}: </strong>
-                            {x.a.instead}
-                          </>
-                        }
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </>
+                )}
+                {x.unavailable || x.card?.reason === "host_unavailable" ? (
+                  <Unavailable onRetry={x.replay || !x.q ? undefined : () => ask(x.q)} />
+                ) : x.card ? (
+                  <ChatCard
+                    card={x.card}
+                    canMarket={Boolean(me.can_see_sahmk)}
+                    onSource={(row, item) => setSrc({ row, item })}
+                    onRetry={x.replay ? undefined : () => ask(x.q)}
+                  />
+                ) : (
+                  <Progress job={x.job} />
+                )}
+              </div>
+            ))
           )}
         </div>
         <form className="askbar" onSubmit={submit}>
@@ -247,51 +353,261 @@ export function Chat({ me }: { me: Me }) {
               placeholder={t.askPlaceholder}
               aria-label={t.ask}
               dir="auto"
-              disabled={!live}
+              disabled={!on}
+              readOnly={!on}
+              maxLength={600}
+              aria-describedby="ask-why"
             />
-            <button className="primary" type="submit" disabled={!live || !q.trim()}>
+            <button className="primary" type="submit" disabled={!on || busy || !q.trim()} aria-describedby="ask-why">
               {t.ask}
             </button>
           </div>
-          <p className="small muted signed-line">{t.signedOffLine}</p>
+          <p className="small muted signed-line" id="ask-why">
+            {askWhy}
+          </p>
         </form>
       </section>
 
       {src && (
         <div className="chat-source">
-          <SourcePanel row={src.row} itemName={src.item} isOwner={me.role === "owner"} onClose={() => setSrc(null)} />
+          <SourcePanel row={src.row} itemName={src.item} isOwner={isOwner} onClose={() => setSrc(null)} />
         </div>
       )}
     </div>
   );
 }
 
-// An answer: what it is, the figure large, a sentence or two, and its sources. In the question's
-// language, whatever the page's.
-function AnswerCard({ a, onSource }: { a: Answer; onSource: (row: FactRow, item: string) => void }) {
-  const ar = a.lang === "ar";
+// What is happening while the question is answered: each step as the server reports it, the one
+// running now marked, and the time so far. In the page's language.
+function Progress({ job }: { job?: JobView }) {
+  const { lang } = useLang();
+  const ar = lang === "ar";
+  const [t0] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const k = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(k);
+  }, []);
+  const steps = job?.steps?.length ? job.steps : ["question"];
+  const secs = Math.max(job?.seconds ?? 0, (now - t0) / 1000);
   return (
-    <article className="card answer" dir={ar ? "rtl" : "ltr"} lang={a.lang}>
-      <div className="eyebrow">
-        {a.item} · {a.company} · {ar ? <span>{day(a.row.period_end, "ar")}</span> : <bdi className="num">{day(a.row.period_end, "en")}</bdi>}
-      </div>
-      <div className="answer-figure">
-        <span className="figure-xl">
-          <Fig v={a.row.value} />
-        </span>
-        <span className="small muted">{unit(a.row.scale, false, a.lang)}</span>
-      </div>
-      <p className="answer-text">{a.sentence}</p>
-      <div className="answer-sources">
-        <button type="button" className="btn srcbtn" onClick={() => onSource(a.row, a.item)}>
-          {ar ? "المصدر" : "Source"}: <bdi lang="en">{a.row.document}</bdi>, {ar ? "صفحة" : "page"} <bdi className="num">{a.row.page}</bdi>
-        </button>
-        <Link className="btn srcbtn" to={`/statements/${a.row.document.split("_")[0]}`}>
-          {ar ? "القائمة كاملة" : "Full statement"}
-        </Link>
-      </div>
+    <div className="card chat-progress" role="status" aria-live="polite">
+      <ol>
+        {steps.map((s, i) => {
+          const current = i === steps.length - 1;
+          return (
+            <li key={s + i} className={current ? "current" : "done"}>
+              <span className="step-mark" aria-hidden="true">
+                {current ? "" : "✓"}
+              </span>
+              {(STEPS[s] ?? STEPS.tool)[ar ? 1 : 0]}
+              {current && <span className="dots" aria-hidden="true" />}
+            </li>
+          );
+        })}
+      </ol>
       <p className="small muted" style={{ margin: "8px 0 0" }}>
-        {ar ? "رقم معتمد، كما ورد في القوائم" : "Signed-off figure, as printed"}
+        <bdi className="num">{Math.floor(secs)}</bdi> {ar ? "ث · تستغرق الإجابة عادةً نحو 17 ثانية" : "s · answers usually take about 17 seconds"}
+      </p>
+    </div>
+  );
+}
+
+function Unavailable({ onRetry }: { onRetry?: () => void }) {
+  const { lang } = useLang();
+  const ar = lang === "ar";
+  return (
+    <div className="card refused chat-unavailable" role="status">
+      <div>{UNAVAILABLE[ar ? 1 : 0]}</div>
+      {onRetry && (
+        <button className="btn" style={{ marginTop: 10 }} onClick={onRetry}>
+          {RETRY[ar ? 1 : 0]}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// What the server read the question as: its companies (or the sector) and periods
+function ReadAsLine({ r, lang }: { r?: ReadAs; lang: Lang }) {
+  if (!r) return null;
+  const ar = lang === "ar";
+  const sep = ar ? "، " : ", ";
+  const who = r.sector
+    ? ar
+      ? `البنوك التي يغطيها سبير (${r.companies.length})`
+      : `the banks Spear covers (${r.companies.length})`
+    : r.companies.map((c) => `${ar ? c.name_ar : c.name_en} (${c.symbol})`).join(sep);
+  const when = r.periods.map((p) => (ar ? p.ar : p.en)).join(sep);
+  const parts = [
+    who || (r.unstated.includes("company") ? (ar ? "الشركة غير مذكورة" : "company not stated") : ""),
+    when || (r.unstated.includes("period") ? (ar ? "الفترة غير مذكورة" : "period not stated") : ""),
+  ].filter(Boolean);
+  return (
+    <div className="eyebrow read-as">
+      {ar ? "قُرئ السؤال على أنه" : "Read as"}: {parts.join(" · ")}
+    </div>
+  );
+}
+
+const citeOf = (c: Cell, lang: Lang) => (lang === "ar" ? `${c.document}، صفحة ${c.page}` : `${c.document}, page ${c.page}`);
+
+// A citation Spear wrote ("1180_SNB_Q3-2026_En, page 4"), drawn as a chip with the document's
+// readable name that opens the boxed page. The rest of the figure's text is Spear's, untouched.
+function cites(text: string, cells: Cell[], lang: Lang, onSource: (c: Cell) => void): ReactNode[] {
+  const marks = cells.filter((c) => c.document && c.page !== undefined && c.page !== null).map((c) => ({ c, s: citeOf(c, lang) }));
+  const out: ReactNode[] = [];
+  let rest = text;
+  let k = 0;
+  while (rest) {
+    let best: { at: number; c: Cell; s: string } | null = null;
+    for (const m of marks) {
+      const at = rest.indexOf(m.s);
+      if (at >= 0 && (!best || at < best.at)) best = { at, ...m };
+    }
+    if (!best) {
+      out.push(rest);
+      break;
+    }
+    if (best.at) out.push(rest.slice(0, best.at));
+    const c = best.c;
+    out.push(
+      <button key={k++} type="button" className="src-chip" onClick={() => onSource(c)}>
+        {docLabel(c, lang)}
+      </button>,
+    );
+    rest = rest.slice(best.at + best.s.length);
+  }
+  return out;
+}
+
+// A figure's text as Spear wrote it: its amount (before the parenthesis) and what it is (the
+// parenthesis, without the citation, which becomes a chip)
+function partsOf(f: Figure, lang: Lang): { amount: string | null; label: string } {
+  const at = f.text.indexOf(" (");
+  if (at <= 0 || at > 60 || !f.text.endsWith(")")) return { amount: null, label: f.text };
+  let label = f.text.slice(at + 2, -1);
+  for (const c of f.cells) label = label.replace(citeOf(c, lang), "");
+  return { amount: f.text.slice(0, at), label: label.replace(/[;؛]\s*$/, "").trim() };
+}
+
+// a figure's sources: the first three, then the rest on request (a comparison cites every company)
+function Chips({ cells, lang, onOpen }: { cells: Cell[]; lang: Lang; onOpen: (c: Cell) => void }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? cells : cells.slice(0, 3);
+  const more = cells.length - shown.length;
+  return (
+    <div className="chips">
+      {shown.map((c, i) => (
+        <button key={i} type="button" className="src-chip" onClick={() => onOpen(c)}>
+          {docLabel(c, lang)}
+        </button>
+      ))}
+      {more > 0 && (
+        <button type="button" className="quiet small more-chips" onClick={() => setAll(true)}>
+          {lang === "ar" ? `+ ${more} مصادر أخرى` : `+ ${more} more sources`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ChatCard({
+  card,
+  canMarket,
+  onSource,
+  onRetry,
+}: {
+  card: Card;
+  canMarket: boolean;
+  onSource: (row: FactRow, item: string) => void;
+  onRetry?: () => void;
+}) {
+  const ar = card.lang === "ar";
+  const dir = ar ? "rtl" : "ltr";
+  const allow = ar ? undefined : "";
+  if (card.kind === "not_answered") {
+    return (
+      <div dir={dir} lang={card.lang} className="answer-slot" data-allow-en={allow}>
+        <NotAnswered
+          reason={card.text.replace(NOT_ANSWERED_PREFIX, "")}
+          instead={
+            card.reason === "server_error" && onRetry ? (
+              <button className="btn" onClick={onRetry}>
+                {RETRY[ar ? 1 : 0]}
+              </button>
+            ) : undefined
+          }
+        />
+      </div>
+    );
+  }
+  if (card.kind === "clarify" || card.kind === "market_page") {
+    return (
+      <article className="card answer" dir={dir} lang={card.lang} data-allow-en={allow}>
+        <ReadAsLine r={card.read_as} lang={card.lang} />
+        <div className="eyebrow">{card.kind === "clarify" ? (ar ? "سؤال من سبير" : "Spear asks") : ar ? "السوق" : "Market"}</div>
+        <p className="answer-text">{card.text}</p>
+        {card.kind === "market_page" && canMarket && (
+          <Link className="btn" to="/market">
+            {ar ? "صفحة السوق" : "Market page"}
+          </Link>
+        )}
+      </article>
+    );
+  }
+  const figures = card.figures ?? [];
+  const byRef = new Map(figures.map((f) => [f.ref, f]));
+  const open = (f: Figure) => (c: Cell) => onSource(c, partsOf(f, card.lang).label);
+  return (
+    <article className="card answer chat-card" dir={dir} lang={card.lang} data-allow-en={allow}>
+      <ReadAsLine r={card.read_as} lang={card.lang} />
+      <p className="answer-text">
+        {card.segments
+          ? card.segments.map((s, i) => {
+              const f = s.ref ? byRef.get(s.ref) : undefined;
+              if (!f) return <span key={i}>{s.text}</span>;
+              const amount = s.text.indexOf(" (") > 0 ? partsOf(f, card.lang).amount : null;
+              return (
+                <span key={i} className="fig-inline">
+                  {amount && s.text.startsWith(amount) ? (
+                    <>
+                      <strong>{amount}</strong>
+                      {cites(s.text.slice(amount.length), f.cells, card.lang, open(f))}
+                    </>
+                  ) : (
+                    cites(s.text, f.cells, card.lang, open(f))
+                  )}
+                  <sup className="fig-n">{s.n}</sup>
+                </span>
+              );
+            })
+          : card.text}
+      </p>
+      {figures.length > 0 && (
+        <div className="fig-cards">
+          {figures.map((f) => {
+            const p = partsOf(f, card.lang);
+            return (
+              <div key={f.ref} className="fig-card">
+                <span className="fig-n" aria-hidden="true">
+                  {f.n}
+                </span>
+                {p.amount && <div className="fig-amount num">{p.amount}</div>}
+                <div className="small">{p.label}</div>
+                <Chips cells={f.cells} lang={card.lang} onOpen={open(f)} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {(card.notes ?? []).map((n, i) => (
+        <p key={i} className="small muted" style={{ margin: "6px 0 0" }}>
+          {n}
+        </p>
+      ))}
+      <p className="small muted" style={{ margin: "8px 0 0" }}>
+        {ar ? "أرقام معتمدة، كتبها سبير وطابقها ببياناته" : "Signed-off figures, written by Spear and checked against its data"}
       </p>
     </article>
   );
