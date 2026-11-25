@@ -1,0 +1,7 @@
+node_modules/
+dist/
+src/styles/tokens.css
+tests/.auth/
+test-results/
+playwright-report/
+tests/results.json
