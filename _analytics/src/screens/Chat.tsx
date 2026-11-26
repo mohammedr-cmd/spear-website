@@ -261,7 +261,7 @@ export function Chat({ me }: { me: Me }) {
           </button>
           <span className="eyebrow">{t.chat}</span>
           {isOwner && on && status?.switch && (
-            <button className="quiet small chat-switch" onClick={() => setSwitch(false)} disabled={switching || busy}>
+            <button data-sweep="skip" className="quiet small chat-switch" onClick={() => setSwitch(false)} disabled={switching || busy}>
               {ar ? "إيقاف المحادثة لحسابي" : "Switch chat off for my account"}
             </button>
           )}
@@ -297,7 +297,7 @@ export function Chat({ me }: { me: Me }) {
               <p>{off.body[ar ? 1 : 0]}</p>
               {isOwner && status?.why === "switched_off" && status.can_switch_on && (
                 <p>
-                  <button className="primary" onClick={() => setSwitch(true)} disabled={switching}>
+                  <button data-sweep="skip" className="primary" onClick={() => setSwitch(true)} disabled={switching}>
                     {ar ? "تفعيل المحادثة لحسابي" : "Switch chat on for my account"}
                   </button>
                 </p>
@@ -481,14 +481,45 @@ function cites(text: string, cells: Cell[], lang: Lang, onSource: (c: Cell) => v
   return out;
 }
 
-// A figure's text as Spear wrote it: its amount (before the parenthesis) and what it is (the
-// parenthesis, without the citation, which becomes a chip)
-function partsOf(f: Figure, lang: Lang): { amount: string | null; label: string } {
+// A figure's text as Spear wrote it: its amount (before the bracket), what it is (the bracket,
+// without the citation, which becomes a chip), and the cells it cites. Only when that bracket is
+// the figure's last: a change or a ranking ("Bank Albilad (1140) is the highest ...") stays whole.
+function partsOf(f: Figure, lang: Lang): { amount: string | null; label: string; cited: Cell[] } {
+  const cited = f.cells.filter((c) => f.text.includes(citeOf(c, lang)));
   const at = f.text.indexOf(" (");
-  if (at <= 0 || at > 60 || !f.text.endsWith(")")) return { amount: null, label: f.text };
+  if (at <= 0 || !f.text.endsWith(")")) return { amount: null, label: f.text, cited };
+  let depth = 0;
+  for (let i = at + 1; i < f.text.length; i++) {
+    if (f.text[i] === "(") depth++;
+    else if (f.text[i] === ")" && --depth === 0 && i !== f.text.length - 1) return { amount: null, label: f.text, cited };
+  }
   let label = f.text.slice(at + 2, -1);
-  for (const c of f.cells) label = label.replace(citeOf(c, lang), "");
-  return { amount: f.text.slice(0, at), label: label.replace(/[;؛]\s*$/, "").trim() };
+  for (const c of cited) label = label.replace(citeOf(c, lang), "");
+  return { amount: f.text.slice(0, at), label: label.replace(/\s*[;؛]\s*$/, "").trim(), cited };
+}
+
+// A figure in the answer's sentence: the amount in bold, what it is in one bracket, then its
+// source chip after the bracket (never inside it), then its marker
+function InlineFigure({ f, n, lang, onSource }: { f: Figure; n?: number; lang: Lang; onSource: (c: Cell) => void }) {
+  const p = partsOf(f, lang);
+  return (
+    <span className="fig-inline">
+      {p.amount ? (
+        <>
+          <strong>{p.amount}</strong> ({p.label})
+        </>
+      ) : (
+        cites(f.text, f.cells, lang, onSource)
+      )}
+      {p.amount &&
+        p.cited.map((c, i) => (
+          <button key={i} type="button" className="src-chip" onClick={() => onSource(c)}>
+            {docLabel(c, lang)}
+          </button>
+        ))}
+      <sup className="fig-n">{n}</sup>
+    </span>
+  );
 }
 
 // a figure's sources: the first three, then the rest on request (a comparison cites every company)
@@ -567,20 +598,7 @@ function ChatCard({
           ? card.segments.map((s, i) => {
               const f = s.ref ? byRef.get(s.ref) : undefined;
               if (!f) return <span key={i}>{s.text}</span>;
-              const amount = s.text.indexOf(" (") > 0 ? partsOf(f, card.lang).amount : null;
-              return (
-                <span key={i} className="fig-inline">
-                  {amount && s.text.startsWith(amount) ? (
-                    <>
-                      <strong>{amount}</strong>
-                      {cites(s.text.slice(amount.length), f.cells, card.lang, open(f))}
-                    </>
-                  ) : (
-                    cites(s.text, f.cells, card.lang, open(f))
-                  )}
-                  <sup className="fig-n">{s.n}</sup>
-                </span>
-              );
+              return <InlineFigure key={i} f={f} n={s.n} lang={card.lang} onSource={open(f)} />;
             })
           : card.text}
       </p>

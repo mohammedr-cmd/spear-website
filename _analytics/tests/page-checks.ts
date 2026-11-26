@@ -85,7 +85,11 @@ export async function sweepControls(page: Page, limit = 30): Promise<string[]> {
   const errors: string[] = [];
   const onError = (e: Error) => errors.push(e.message);
   page.on("pageerror", onError);
-  const sel = "main button:visible, main select:visible, main input[type=checkbox]:visible, main summary:visible";
+  // a control that changes a stored setting (the owner's chat switch) is left to its own test,
+  // which answers it in the browser: a sweep must never switch chat on
+  const sel = ["main button", "main select", "main input[type=checkbox]", "main summary"]
+    .map((s) => `${s}:not([data-sweep=skip]):visible`)
+    .join(", ");
   const count = Math.min(limit, await page.locator(sel).count());
   for (let i = 0; i < count; i++) {
     const c = page.locator(sel).nth(i);

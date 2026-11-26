@@ -166,17 +166,18 @@ export function Dashboard({ me }: { me: Me }) {
           readOnly={!chatOn}
           aria-describedby="dash-ask-why"
         />
-        <button className="primary" type="submit" disabled={!chatOn} aria-describedby="dash-ask-why">
+        <button className="primary" type="submit" disabled={!chatOn || !q.trim()} aria-describedby="dash-ask-why">
           {t.ask}
         </button>
       </form>
-      {!chatOn && (
+      {/* why Ask is disabled: chat is off, or nothing is typed yet */}
+      {(!chatOn || !q.trim()) && (
         <p
           className="small muted"
           id="dash-ask-why"
           style={{ margin: "-8px 0 var(--space-3)" }}
         >
-          {t.chatOff}
+          {chatOn ? t.typeQuestion : t.chatOff}
         </p>
       )}
       {err && !d ? (

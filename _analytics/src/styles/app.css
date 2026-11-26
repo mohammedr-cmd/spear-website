@@ -704,7 +704,10 @@ main.full > .wrap {
   font-size: 11px;
   font-weight: 600;
   color: var(--ink-muted);
-  margin-inline-start: 2px;
+  margin-inline-start: 3px;
+}
+.fig-inline > .src-chip {
+  margin-inline-start: 4px;
 }
 .fig-cards {
   display: grid;
@@ -712,23 +715,26 @@ main.full > .wrap {
   gap: 8px;
   margin: 4px 0 8px;
 }
+/* the marker sits in the card's top corner, on a row of its own above the amount, so it never
+   stands beside a digit, in either direction (an Arabic amount's digits reach the left edge) */
 .fig-card {
   position: relative;
   border: 1px solid var(--line);
   background: var(--paper);
-  padding: 10px 12px;
+  padding: 24px 12px 10px;
   min-width: 0;
 }
 .fig-card > .fig-n {
   position: absolute;
-  inset-inline-end: 8px;
-  top: 6px;
+  inset-inline-end: 10px;
+  top: 5px;
+  line-height: 14px;
+  margin: 0;
 }
 .fig-amount {
   font-size: 20px;
   line-height: 28px;
   font-weight: 600;
-  margin-inline-end: 18px;
   overflow-wrap: anywhere;
 }
 .fig-card .small {
