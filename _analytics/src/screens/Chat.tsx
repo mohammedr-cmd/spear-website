@@ -35,8 +35,10 @@ type Card = {
 type ReadAs = {
   companies: { symbol: string; name_en: string; name_ar: string }[];
   sector: string | null;
-  periods: { period_end: string; months: number | null; en: string; ar: string }[];
+  periods: { period_end: string; months: number | null; en: string; ar: string; relative?: string | null }[];
   unstated: string[];
+  // the reader's own line, with what a relative phrase ("latest", "last year") was read as
+  line?: { en: string; ar: string };
 };
 type JobView = { id: string; status: "running" | "done"; question: string; steps: string[]; seconds: number; card?: Card };
 type Exchange = { q: string; job?: JobView; card?: Card; unavailable?: boolean; replay?: boolean };
@@ -432,6 +434,7 @@ function Unavailable({ onRetry }: { onRetry?: () => void }) {
 function ReadAsLine({ r, lang }: { r?: ReadAs; lang: Lang }) {
   if (!r) return null;
   const ar = lang === "ar";
+  if (r.line) return <div className="eyebrow read-as">{r.line[ar ? "ar" : "en"]}</div>;
   const sep = ar ? "، " : ", ";
   const who = r.sector
     ? ar
