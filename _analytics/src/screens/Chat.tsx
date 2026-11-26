@@ -51,13 +51,13 @@ const STEPS: Record<string, [string, string]> = {
   question: ["Reading your question", "قراءة سؤالك"],
   scope: ["Finding the company and period", "تحديد الشركة والفترة"],
   company: ["Looking up the company", "البحث عن الشركة"],
-  coverage: ["Checking which reports Spear holds", "التحقق من التقارير المتاحة في سبير"],
+  coverage: ["Checking which reports Spear holds", "التحقق من التقارير المتاحة في رمح"],
   item: ["Finding the line item", "تحديد البند"],
   statement: ["Reading the statement", "قراءة القائمة المالية"],
   compare: ["Comparing the companies", "مقارنة الشركات"],
   source: ["Finding the page", "تحديد الصفحة"],
-  tool: ["Using Spear's tools", "استخدام أدوات سبير"],
-  checking: ["Checking every figure against Spear's data", "مطابقة كل رقم ببيانات سبير"],
+  tool: ["Using Spear's tools", "استخدام أدوات رمح"],
+  checking: ["Checking every figure against Spear's data", "مطابقة كل رقم ببيانات رمح"],
   correcting: ["Correcting the draft", "تصحيح المسودة"],
 };
 
@@ -92,7 +92,7 @@ const OFF: Record<string, { title: [string, string]; body: [string, string] }> =
   },
   no_key: {
     title: ["Chat is off: the chat model's key isn't set on this PC.", "المحادثة متوقفة: مفتاح نموذج المحادثة غير مضبوط على هذا الجهاز."],
-    body: ["Set OPENROUTER_API_KEY for the Spear service, then restart it.", "اضبط OPENROUTER_API_KEY لخدمة سبير ثم أعد تشغيلها."],
+    body: ["Set OPENROUTER_API_KEY for the Spear service, then restart it.", "اضبط OPENROUTER_API_KEY لخدمة رمح ثم أعد تشغيلها."],
   },
 };
 
@@ -438,7 +438,7 @@ function ReadAsLine({ r, lang }: { r?: ReadAs; lang: Lang }) {
   const sep = ar ? "، " : ", ";
   const who = r.sector
     ? ar
-      ? `البنوك التي يغطيها سبير (${r.companies.length})`
+      ? `البنوك التي يغطيها رمح (${r.companies.length})`
       : `the banks Spear covers (${r.companies.length})`
     : r.companies.map((c) => `${ar ? c.name_ar : c.name_en} (${c.symbol})`).join(sep);
   const when = r.periods.map((p) => (ar ? p.ar : p.en)).join(sep);
@@ -580,7 +580,7 @@ function ChatCard({
     return (
       <article className="card answer" dir={dir} lang={card.lang} data-allow-en={allow}>
         <ReadAsLine r={card.read_as} lang={card.lang} />
-        <div className="eyebrow">{card.kind === "clarify" ? (ar ? "سؤال من سبير" : "Spear asks") : ar ? "السوق" : "Market"}</div>
+        <div className="eyebrow">{card.kind === "clarify" ? (ar ? "سؤال من رمح" : "Spear asks") : ar ? "السوق" : "Market"}</div>
         <p className="answer-text">{card.text}</p>
         {card.kind === "market_page" && canMarket && (
           <Link className="btn" to="/market">
@@ -628,7 +628,7 @@ function ChatCard({
         </p>
       ))}
       <p className="small muted" style={{ margin: "8px 0 0" }}>
-        {ar ? "أرقام معتمدة، كتبها سبير وطابقها ببياناته" : "Signed-off figures, written by Spear and checked against its data"}
+        {ar ? "أرقام معتمدة، كتبها رمح وطابقها ببياناته" : "Signed-off figures, written by Spear and checked against its data"}
       </p>
     </article>
   );
