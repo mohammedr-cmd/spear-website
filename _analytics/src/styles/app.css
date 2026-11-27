@@ -798,9 +798,23 @@ main.full > .wrap {
   min-height: 100vh;
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "head box"
+    "story box";
+}
+.public-head {
+  grid-area: head;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: var(--space-4) var(--space-4) 0;
+  border-inline-end: 1px solid var(--line);
 }
 .public .story {
-  padding: var(--space-4) var(--space-4);
+  grid-area: story;
+  padding: var(--space-3) var(--space-4) var(--space-4);
   border-inline-end: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -825,6 +839,7 @@ main.full > .wrap {
   font-weight: 500;
 }
 .public .box {
+  grid-area: box;
   padding: var(--space-4) var(--space-3);
   display: flex;
   align-items: center;
@@ -1002,13 +1017,28 @@ main.full > .wrap {
   .sheet-close {
     display: inline-flex;
   }
+  /* the header, then the form, then the headline: the form is on the first screen */
   .public {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "head"
+      "box"
+      "story";
+  }
+  .public-head {
+    padding: 16px;
+    border-inline-end: none;
+    border-bottom: 1px solid var(--line);
+  }
+  /* the sign-in header keeps "Analytics" beside the logo (the app's header has no room) */
+  .public-head .lockup .eyebrow {
+    display: block;
   }
   .public .story {
     padding: var(--space-3) 16px;
     border-inline-end: none;
-    border-bottom: 1px solid var(--line);
+    border-top: 1px solid var(--line);
   }
   .public .box {
     padding: var(--space-3) 16px;

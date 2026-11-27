@@ -3,18 +3,20 @@ import { ApiError, post, refreshCsrf } from "../api";
 import { useLang } from "../i18n";
 import { LangThemeToggles, Lockup } from "../components/Shell";
 
-// The public page: no market data, ever (Mo, 25 Nov 2026).
+// The public page: no market data, ever (Mo, 25 Nov 2026). On a phone the form comes straight
+// after the header, so it's on the first screen; the headline and its points follow it
+// (27 Nov 2026).
 export function PublicFrame({ children }: { children: React.ReactNode }) {
   const { t } = useLang();
   return (
     <div className="public">
-      <section className="story">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
-          <Lockup />
-          <div className="tools">
-            <LangThemeToggles />
-          </div>
+      <div className="public-head">
+        <Lockup />
+        <div className="tools">
+          <LangThemeToggles />
         </div>
+      </div>
+      <section className="story">
         <h1 className="display" style={{ maxWidth: 560 }}>{t.headline}</h1>
         <ul>
           {[t.point1, t.point2, t.point3].map((p, i) => (
