@@ -35,8 +35,10 @@ type Card = {
 type ReadAs = {
   companies: { symbol: string; name_en: string; name_ar: string }[];
   sector: string | null;
-  periods: { period_end: string; months: number | null; en: string; ar: string }[];
+  periods: { period_end: string; months: number | null; en: string; ar: string; relative?: string | null }[];
   unstated: string[];
+  // the reader's own line, with what a relative phrase ("latest", "last year") was read as
+  line?: { en: string; ar: string };
 };
 type JobView = { id: string; status: "running" | "done"; question: string; steps: string[]; seconds: number; card?: Card };
 type Exchange = { q: string; job?: JobView; card?: Card; unavailable?: boolean; replay?: boolean };
@@ -49,13 +51,13 @@ const STEPS: Record<string, [string, string]> = {
   question: ["Reading your question", "قراءة سؤالك"],
   scope: ["Finding the company and period", "تحديد الشركة والفترة"],
   company: ["Looking up the company", "البحث عن الشركة"],
-  coverage: ["Checking which reports Spear holds", "التحقق من التقارير المتاحة في سبير"],
+  coverage: ["Checking which reports Spear holds", "التحقق من التقارير المتاحة في رمح"],
   item: ["Finding the line item", "تحديد البند"],
   statement: ["Reading the statement", "قراءة القائمة المالية"],
   compare: ["Comparing the companies", "مقارنة الشركات"],
   source: ["Finding the page", "تحديد الصفحة"],
-  tool: ["Using Spear's tools", "استخدام أدوات سبير"],
-  checking: ["Checking every figure against Spear's data", "مطابقة كل رقم ببيانات سبير"],
+  tool: ["Using Spear's tools", "استخدام أدوات رمح"],
+  checking: ["Checking every figure against Spear's data", "مطابقة كل رقم ببيانات رمح"],
   correcting: ["Correcting the draft", "تصحيح المسودة"],
 };
 
@@ -90,7 +92,7 @@ const OFF: Record<string, { title: [string, string]; body: [string, string] }> =
   },
   no_key: {
     title: ["Chat is off: the chat model's key isn't set on this PC.", "المحادثة متوقفة: مفتاح نموذج المحادثة غير مضبوط على هذا الجهاز."],
-    body: ["Set OPENROUTER_API_KEY for the Spear service, then restart it.", "اضبط OPENROUTER_API_KEY لخدمة سبير ثم أعد تشغيلها."],
+    body: ["Set OPENROUTER_API_KEY for the Spear service, then restart it.", "اضبط OPENROUTER_API_KEY لخدمة رمح ثم أعد تشغيلها."],
   },
 };
 
@@ -261,7 +263,7 @@ export function Chat({ me }: { me: Me }) {
           </button>
           <span className="eyebrow">{t.chat}</span>
           {isOwner && on && status?.switch && (
-            <button className="quiet small chat-switch" onClick={() => setSwitch(false)} disabled={switching || busy}>
+            <button data-sweep="skip" className="quiet small chat-switch" onClick={() => setSwitch(false)} disabled={switching || busy}>
               {ar ? "إيقاف المحادثة لحسابي" : "Switch chat off for my account"}
             </button>
           )}
@@ -297,7 +299,7 @@ export function Chat({ me }: { me: Me }) {
               <p>{off.body[ar ? 1 : 0]}</p>
               {isOwner && status?.why === "switched_off" && status.can_switch_on && (
                 <p>
-                  <button className="primary" onClick={() => setSwitch(true)} disabled={switching}>
+                  <button data-sweep="skip" className="primary" onClick={() => setSwitch(true)} disabled={switching}>
                     {ar ? "تفعيل المحادثة لحسابي" : "Switch chat on for my account"}
                   </button>
                 </p>
@@ -432,10 +434,11 @@ function Unavailable({ onRetry }: { onRetry?: () => void }) {
 function ReadAsLine({ r, lang }: { r?: ReadAs; lang: Lang }) {
   if (!r) return null;
   const ar = lang === "ar";
+  if (r.line) return <div className="eyebrow read-as">{r.line[ar ? "ar" : "en"]}</div>;
   const sep = ar ? "، " : ", ";
   const who = r.sector
     ? ar
-      ? `البنوك التي يغطيها سبير (${r.companies.length})`
+      ? `البنوك التي يغطيها رمح (${r.companies.length})`
       : `the banks Spear covers (${r.companies.length})`
     : r.companies.map((c) => `${ar ? c.name_ar : c.name_en} (${c.symbol})`).join(sep);
   const when = r.periods.map((p) => (ar ? p.ar : p.en)).join(sep);
@@ -481,14 +484,45 @@ function cites(text: string, cells: Cell[], lang: Lang, onSource: (c: Cell) => v
   return out;
 }
 
-// A figure's text as Spear wrote it: its amount (before the parenthesis) and what it is (the
-// parenthesis, without the citation, which becomes a chip)
-function partsOf(f: Figure, lang: Lang): { amount: string | null; label: string } {
+// A figure's text as Spear wrote it: its amount (before the bracket), what it is (the bracket,
+// without the citation, which becomes a chip), and the cells it cites. Only when that bracket is
+// the figure's last: a change or a ranking ("Bank Albilad (1140) is the highest ...") stays whole.
+function partsOf(f: Figure, lang: Lang): { amount: string | null; label: string; cited: Cell[] } {
+  const cited = f.cells.filter((c) => f.text.includes(citeOf(c, lang)));
   const at = f.text.indexOf(" (");
-  if (at <= 0 || at > 60 || !f.text.endsWith(")")) return { amount: null, label: f.text };
+  if (at <= 0 || !f.text.endsWith(")")) return { amount: null, label: f.text, cited };
+  let depth = 0;
+  for (let i = at + 1; i < f.text.length; i++) {
+    if (f.text[i] === "(") depth++;
+    else if (f.text[i] === ")" && --depth === 0 && i !== f.text.length - 1) return { amount: null, label: f.text, cited };
+  }
   let label = f.text.slice(at + 2, -1);
-  for (const c of f.cells) label = label.replace(citeOf(c, lang), "");
-  return { amount: f.text.slice(0, at), label: label.replace(/[;؛]\s*$/, "").trim() };
+  for (const c of cited) label = label.replace(citeOf(c, lang), "");
+  return { amount: f.text.slice(0, at), label: label.replace(/\s*[;؛]\s*$/, "").trim(), cited };
+}
+
+// A figure in the answer's sentence: the amount in bold, what it is in one bracket, then its
+// source chip after the bracket (never inside it), then its marker
+function InlineFigure({ f, n, lang, onSource }: { f: Figure; n?: number; lang: Lang; onSource: (c: Cell) => void }) {
+  const p = partsOf(f, lang);
+  return (
+    <span className="fig-inline">
+      {p.amount ? (
+        <>
+          <strong>{p.amount}</strong> ({p.label})
+        </>
+      ) : (
+        cites(f.text, f.cells, lang, onSource)
+      )}
+      {p.amount &&
+        p.cited.map((c, i) => (
+          <button key={i} type="button" className="src-chip" onClick={() => onSource(c)}>
+            {docLabel(c, lang)}
+          </button>
+        ))}
+      <sup className="fig-n">{n}</sup>
+    </span>
+  );
 }
 
 // a figure's sources: the first three, then the rest on request (a comparison cites every company)
@@ -546,7 +580,7 @@ function ChatCard({
     return (
       <article className="card answer" dir={dir} lang={card.lang} data-allow-en={allow}>
         <ReadAsLine r={card.read_as} lang={card.lang} />
-        <div className="eyebrow">{card.kind === "clarify" ? (ar ? "سؤال من سبير" : "Spear asks") : ar ? "السوق" : "Market"}</div>
+        <div className="eyebrow">{card.kind === "clarify" ? (ar ? "سؤال من رمح" : "Spear asks") : ar ? "السوق" : "Market"}</div>
         <p className="answer-text">{card.text}</p>
         {card.kind === "market_page" && canMarket && (
           <Link className="btn" to="/market">
@@ -567,20 +601,7 @@ function ChatCard({
           ? card.segments.map((s, i) => {
               const f = s.ref ? byRef.get(s.ref) : undefined;
               if (!f) return <span key={i}>{s.text}</span>;
-              const amount = s.text.indexOf(" (") > 0 ? partsOf(f, card.lang).amount : null;
-              return (
-                <span key={i} className="fig-inline">
-                  {amount && s.text.startsWith(amount) ? (
-                    <>
-                      <strong>{amount}</strong>
-                      {cites(s.text.slice(amount.length), f.cells, card.lang, open(f))}
-                    </>
-                  ) : (
-                    cites(s.text, f.cells, card.lang, open(f))
-                  )}
-                  <sup className="fig-n">{s.n}</sup>
-                </span>
-              );
+              return <InlineFigure key={i} f={f} n={s.n} lang={card.lang} onSource={open(f)} />;
             })
           : card.text}
       </p>
@@ -607,7 +628,7 @@ function ChatCard({
         </p>
       ))}
       <p className="small muted" style={{ margin: "8px 0 0" }}>
-        {ar ? "أرقام معتمدة، كتبها سبير وطابقها ببياناته" : "Signed-off figures, written by Spear and checked against its data"}
+        {ar ? "أرقام معتمدة، كتبها رمح وطابقها ببياناته" : "Signed-off figures, written by Spear and checked against its data"}
       </p>
     </article>
   );
