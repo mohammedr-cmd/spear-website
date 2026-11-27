@@ -40,7 +40,12 @@ export function Invite() {
             <a className="btn primary" href="/">{t.signIn}</a>
           </>
         ) : !token ? (
-          <p className="muted">{t.inviteBody}</p>
+          <>
+            <p className="muted">{t.inviteBody}</p>
+            <div className="links">
+              <a href="/">{t.backToSignIn}</a>
+            </div>
+          </>
         ) : (
           <>
             {err && <p className="err ltr-block" lang="en" role="alert">{err}</p>}
@@ -58,6 +63,9 @@ export function Invite() {
               <p className="small muted" style={{ margin: "6px 0 0" }}>{t.passwordRule}</p>
             </div>
             <button className="primary" type="submit" style={{ width: "100%", justifyContent: "center" }}>{t.createAccount}</button>
+            <div className="links">
+              <a href="/">{t.backToSignIn}</a>
+            </div>
           </>
         )}
       </form>
@@ -100,6 +108,9 @@ export function Reset() {
               <p className="small muted" style={{ margin: "6px 0 0" }}>{t.passwordRule}</p>
             </div>
             <button className="primary" type="submit" style={{ width: "100%", justifyContent: "center" }}>{t.setPassword}</button>
+            <div className="links">
+              <a href="/">{t.backToSignIn}</a>
+            </div>
           </>
         )}
       </form>

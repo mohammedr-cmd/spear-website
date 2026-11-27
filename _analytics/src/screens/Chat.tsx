@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ApiError, get, post } from "../api";
+import { ApiError, Offline, get, post } from "../api";
 import { day, type Lang } from "../format";
 import { useLang } from "../i18n";
 import { NotAnswered, docLabel } from "../components/Bits";
@@ -17,6 +17,10 @@ import type { Me } from "../App";
 // then the answer: Spear's text with each figure Spear rendered drawn as a figure card, and each
 // source as a chip that opens the boxed page. A host that is unavailable or rate-limited gives
 // "Chat is temporarily unavailable, please try again" at once, with a retry; never an error page.
+// Any other failure gets its own message (Mo, 27 Nov 2026): the page's security token out of date,
+// signed out, chat switched off, a question still running, too many questions, the question lost
+// in a restart, Spear unreachable or slow, a server error, or no card after 6 minutes. When the
+// page gives up waiting for a card, it tells the server why (chat-failed.jsonl).
 
 type Status = { on: boolean; state: string; why: string | null; switch?: boolean; can_switch_on?: boolean };
 type Cell = FactRow & { symbol?: string };
@@ -41,7 +45,8 @@ type ReadAs = {
   line?: { en: string; ar: string };
 };
 type JobView = { id: string; status: "running" | "done"; question: string; steps: string[]; seconds: number; card?: Card };
-type Exchange = { q: string; job?: JobView; card?: Card; unavailable?: boolean; replay?: boolean };
+type Failure = "host" | "csrf" | "signed_out" | "off" | "busy" | "invalid" | "rate_limited" | "lost" | "unreachable" | "slow" | "server" | "too_long";
+type Exchange = { q: string; job?: JobView; card?: Card; failed?: Failure; replay?: boolean };
 
 const ARABIC = /[؀-ۿ]/;
 // an Arabic question gets an Arabic answer, right to left, whatever the page's language
@@ -98,9 +103,45 @@ const OFF: Record<string, { title: [string, string]; body: [string, string] }> =
 
 const UNAVAILABLE: [string, string] = ["Chat is temporarily unavailable, please try again", "المحادثة غير متاحة مؤقتًا، يُرجى المحاولة مرة أخرى"];
 const RETRY: [string, string] = ["Try again", "إعادة المحاولة"];
+// every other failure, named (Mo, 27 Nov 2026); "host" is the model's host, as before
+const FAILED: Record<Failure, [string, string]> = {
+  host: UNAVAILABLE,
+  csrf: ["Spear's security check failed, which can happen just after signing in. Try again.", "تعذّر التحقق الأمني، وقد يحدث ذلك بعد تسجيل الدخول مباشرة. أعد المحاولة."],
+  signed_out: ["You've been signed out. Sign in again, then ask again.", "انتهت جلستك. سجّل الدخول مرة أخرى ثم أعد السؤال."],
+  off: ["Chat has been switched off.", "أُوقفت المحادثة."],
+  busy: ["Your last question is still being answered. Wait for its answer, then ask again.", "ما زال سؤالك السابق قيد الإجابة. انتظر إجابته ثم اسأل مرة أخرى."],
+  invalid: ["Spear couldn't take this question. Keep it under 600 characters.", "تعذّر قبول هذا السؤال. اجعله أقل من 600 حرف."],
+  rate_limited: ["Too many questions in a minute. Wait a minute, then try again.", "أسئلة كثيرة خلال دقيقة. انتظر دقيقة ثم أعد المحاولة."],
+  lost: ["This question was lost, most likely because Spear's server restarted. Ask it again.", "فُقد هذا السؤال، والأرجح أن خادم رمح أُعيد تشغيله. اطرحه مرة أخرى."],
+  unreachable: ["Spear's server can't be reached. Check your connection, then try again.", "تعذّر الوصول إلى خادم رمح. تحقّق من اتصالك ثم أعد المحاولة."],
+  slow: ["Spear's server took too long to reply. Try again.", "تأخّر خادم رمح في الرد. أعد المحاولة."],
+  server: ["Spear's server had an error, and it has been logged. Try again.", "حدث خطأ في خادم رمح وسُجّل. أعد المحاولة."],
+  too_long: ["This question took too long to answer. Try again.", "استغرقت الإجابة عن هذا السؤال وقتًا طويلًا. أعد المحاولة."],
+};
+const NO_RETRY: Failure[] = ["signed_out", "off"];
+
+function failureOf(e: unknown): Failure {
+  if (e instanceof Offline) return "unreachable";
+  if (!(e instanceof ApiError)) return "server";
+  if (e.status === 408) return "slow";
+  if (e.status === 401) return "signed_out";
+  if (e.status === 403) return e.code === "csrf" ? "csrf" : "off";
+  if (e.status === 404) return "lost";
+  if (e.status === 409) return "busy";
+  if (e.status === 400) return "invalid";
+  if (e.status === 429) return "rate_limited";
+  return "server";
+}
+
+// the page gave up waiting for a card: it says why, so the server's log has a line for it too
+function reportGaveUp(jobId: string, why: "poll_failed" | "too_long" | "lost" | "unreachable", extra: Record<string, number | null> = {}) {
+  post(`/chat/jobs/${encodeURIComponent(jobId)}/gave-up`, { why, ...extra }).catch(() => {
+    /* Spear unreachable: nothing more can be done */
+  });
+}
 const NOT_ANSWERED_PREFIX = /^(Not answered|لم تتم الإجابة)\s*:\s*/;
 const POLL_MS = 700;
-const POLL_GIVE_UP = 3; // failed polls in a row before "temporarily unavailable"
+const POLL_GIVE_UP = 3; // failed polls in a row before the page gives up
 const LONGEST_MS = 6 * 60_000;
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -112,7 +153,7 @@ export function Chat({ me }: { me: Me }) {
   // development only: replay recorded benchmark turns through the web's card (no model call)
   const replays = import.meta.env.DEV ? (params.get("replay") ?? "").split(",").filter(Boolean) : [];
   const [status, setStatus] = useState<Status | null>(null);
-  const [statusFailed, setStatusFailed] = useState(false);
+  const [statusFailed, setStatusFailed] = useState<Failure | null>(null);
   const [thread, setThread] = useState<Exchange[]>([]);
   const [past, setPast] = useState<{ q: string; at: string }[]>([]);
   const [drawer, setDrawer] = useState(false);
@@ -120,13 +161,13 @@ export function Chat({ me }: { me: Me }) {
   const [q, setQ] = useState(params.get("q") ?? "");
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState("");
-  const busy = thread.some((x) => !x.card && !x.unavailable);
+  const busy = thread.some((x) => !x.card && !x.failed);
 
   function loadStatus() {
-    setStatusFailed(false);
+    setStatusFailed(null);
     get<Status>("/chat/status")
       .then(setStatus)
-      .catch(() => setStatusFailed(true));
+      .catch((e) => setStatusFailed(failureOf(e)));
   }
   useEffect(loadStatus, []);
 
@@ -155,14 +196,23 @@ export function Chat({ me }: { me: Me }) {
     let failed = 0;
     while (live.current) {
       if (job.status === "done" && job.card) return update(i, { job, card: job.card });
-      if (Date.now() - t0 > LONGEST_MS) return update(i, { job, unavailable: true });
+      const seconds = Math.round((Date.now() - t0) / 100) / 10;
+      if (Date.now() - t0 > LONGEST_MS) {
+        reportGaveUp(job.id, "too_long", { seconds });
+        return update(i, { job, failed: "too_long" });
+      }
       await new Promise((r) => setTimeout(r, POLL_MS));
       try {
         job = await get<JobView>(`/chat/jobs/${job.id}`);
         failed = 0;
         update(i, { job });
       } catch (e) {
-        if ((e instanceof ApiError && e.status === 404) || ++failed >= POLL_GIVE_UP) return update(i, { unavailable: true });
+        const kind = failureOf(e);
+        if (kind === "lost" || ++failed >= POLL_GIVE_UP) {
+          const why = kind === "lost" ? "lost" : kind === "unreachable" ? "unreachable" : "poll_failed";
+          reportGaveUp(job.id, why, { failed_polls: failed, last_status: e instanceof ApiError ? e.status : null, seconds });
+          return update(i, { failed: kind });
+        }
       }
     }
   }
@@ -175,8 +225,8 @@ export function Chat({ me }: { me: Me }) {
       setPast((p) => [{ q: job.question, at: todayIso() }, ...p]);
       follow(i, job);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 403) loadStatus();
-      update(i, { unavailable: true });
+      if (e instanceof ApiError && e.status === 403 && e.code !== "csrf") loadStatus();
+      update(i, { failed: failureOf(e) });
     }
   }
   function submit(e: FormEvent) {
@@ -192,7 +242,7 @@ export function Chat({ me }: { me: Me }) {
     try {
       await post("/owner/settings", { chat_owner_on: on });
     } catch (e) {
-      setSwitchError(e instanceof ApiError && e.message ? e.message : UNAVAILABLE[ar ? 1 : 0]);
+      setSwitchError(e instanceof ApiError && e.message && e.status === 409 ? e.message : FAILED[failureOf(e)][ar ? 1 : 0]);
     } finally {
       setSwitching(false);
       loadStatus();
@@ -287,7 +337,7 @@ export function Chat({ me }: { me: Me }) {
           )}
           {statusFailed ? (
             <div className="chat-off">
-              <h1 className="title">{UNAVAILABLE[ar ? 1 : 0]}</h1>
+              <h1 className="title">{FAILED[statusFailed][ar ? 1 : 0]}</h1>
               <button className="btn" onClick={loadStatus}>
                 {RETRY[ar ? 1 : 0]}
               </button>
@@ -331,8 +381,8 @@ export function Chat({ me }: { me: Me }) {
                     {x.q}
                   </div>
                 )}
-                {x.unavailable || x.card?.reason === "host_unavailable" ? (
-                  <Unavailable onRetry={x.replay || !x.q ? undefined : () => ask(x.q)} />
+                {x.failed || x.card?.reason === "host_unavailable" ? (
+                  <Unavailable kind={x.failed ?? "host"} onRetry={x.replay || !x.q || NO_RETRY.includes(x.failed ?? "host") ? undefined : () => ask(x.q)} />
                 ) : x.card ? (
                   <ChatCard
                     card={x.card}
@@ -415,12 +465,12 @@ function Progress({ job }: { job?: JobView }) {
   );
 }
 
-function Unavailable({ onRetry }: { onRetry?: () => void }) {
+function Unavailable({ kind, onRetry }: { kind: Failure; onRetry?: () => void }) {
   const { lang } = useLang();
   const ar = lang === "ar";
   return (
-    <div className="card refused chat-unavailable" role="status">
-      <div>{UNAVAILABLE[ar ? 1 : 0]}</div>
+    <div className="card refused chat-unavailable" role="status" data-failure={kind}>
+      <div>{FAILED[kind][ar ? 1 : 0]}</div>
       {onRetry && (
         <button className="btn" style={{ marginTop: 10 }} onClick={onRetry}>
           {RETRY[ar ? 1 : 0]}
