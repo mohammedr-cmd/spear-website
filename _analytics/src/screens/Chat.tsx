@@ -602,16 +602,15 @@ function partsOf(f: Figure, lang: Lang): { amount: string | null; label: string;
   return { amount: f.text.slice(0, at), label: label.replace(/\s*[;؛]\s*$/, "").trim(), cited };
 }
 
-// A figure in the answer's sentence: the amount in bold, what it is in one bracket, then its
-// source chip after the bracket (never inside it), then its marker
+// A figure in the answer's sentence: the amount in bold, then its source chip, then its marker.
+// The company, line item and period are on the figure's card below, so the sentence doesn't repeat
+// them in a bracket (Mo, 27 Nov 2026); the amount's tooltip still says what it is.
 function InlineFigure({ f, n, lang, onSource }: { f: Figure; n?: number; lang: Lang; onSource: (c: Cell) => void }) {
   const p = partsOf(f, lang);
   return (
     <span className="fig-inline">
       {p.amount ? (
-        <>
-          <strong>{p.amount}</strong> ({p.label})
-        </>
+        <strong title={p.label}>{p.amount}</strong>
       ) : (
         cites(f.text, f.cells, lang, onSource)
       )}
