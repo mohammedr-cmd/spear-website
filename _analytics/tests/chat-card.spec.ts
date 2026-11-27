@@ -48,7 +48,7 @@ async function markersBesideDigits(page: Page): Promise<string[]> {
 }
 
 for (const lang of ["en", "ar"] as const) {
-  test(`chat card (${lang}): markers clear of digits, one bracket per figure, names in the card's language`, async ({ page }) => {
+  test(`chat card (${lang}): markers clear of digits, no bracket in the sentence, names in the card's language`, async ({ page }) => {
     await open(page, "/chat", lang);
     await page.waitForSelector(".chat-off");
     const fin = await realFact(page);
@@ -89,11 +89,14 @@ for (const lang of ["en", "ar"] as const) {
     await page.click(".askbar button[type=submit]");
     await page.waitForSelector(".chat-card .fig-card");
     expect(await markersBesideDigits(page)).toEqual([]);
-    // the source chip after the figure's bracket, never inside it; no doubled brackets
+    // the sentence has the amount and its source chip, with no bracket: the company, line item
+    // and period are on the figure's card (Mo, 27 Nov 2026)
     const sentence = (await page.locator(".chat-card .answer-text").innerText()).replace(/\s+/g, " ");
-    expect(sentence).not.toContain("((");
-    expect(sentence).toContain(`${amount} (${what})`);
+    expect(sentence).toContain(amount);
+    expect(sentence).not.toContain(what);
+    expect(sentence).not.toContain("(");
     await expect(page.locator(".chat-card .fig-inline > .src-chip")).toHaveCount(1);
+    await expect(page.locator(".chat-card .fig-card").first()).toContainText(what);
     if (ar) expect(await untranslated(page)).toEqual([]);
   });
 }

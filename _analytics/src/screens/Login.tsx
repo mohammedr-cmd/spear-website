@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { ApiError, post } from "../api";
+import { ApiError, post, refreshCsrf } from "../api";
 import { useLang } from "../i18n";
 import { LangThemeToggles, Lockup } from "../components/Shell";
 
@@ -58,13 +58,17 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
       if (r.second_step === "code_sent") {
         setStep("code");
         setPassword("");
-      } else onSignedIn();
+      } else {
+        await refreshCsrf(); // signing in replaced the token: fetch the new one first
+        onSignedIn();
+      }
     });
   }
   function verify(e: FormEvent) {
     e.preventDefault();
     run(async () => {
       await post("/auth/login/code", { code });
+      await refreshCsrf(); // signing in replaced the token: fetch the new one first
       onSignedIn();
     });
   }
