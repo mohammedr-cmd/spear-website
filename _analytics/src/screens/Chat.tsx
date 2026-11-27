@@ -21,13 +21,20 @@ import type { Me } from "../App";
 // signed out, chat switched off, a question still running, too many questions, the question lost
 // in a restart, Spear unreachable or slow, a server error, or no card after 6 minutes. When the
 // page gives up waiting for a card, it tells the server why (chat-failed.jsonl).
+//
+// A conversation is the thread since "New question". Each message after the first is sent with
+// the id of the conversation's last question (`follows`), so the server reads it as a follow-up:
+// "and in 2024?" keeps the company and the line item. A greeting gets the welcome card, whose
+// example questions can be clicked. "Earlier questions" lists one entry per conversation, under
+// its first question; clicking one shows that conversation again. They are kept in the page only,
+// until Mo decides where they're stored (27 Nov 2026), so a reload clears them.
 
 type Status = { on: boolean; state: string; why: string | null; switch?: boolean; can_switch_on?: boolean };
 type Cell = FactRow & { symbol?: string };
 type Figure = { n: number; ref: string; type: string; text: string; cells: Cell[] };
 type Segment = { text: string; ref?: string; n?: number };
 type Card = {
-  kind: "answer" | "not_answered" | "clarify" | "market_page";
+  kind: "answer" | "not_answered" | "clarify" | "market_page" | "welcome";
   reason: string | null;
   lang: Lang;
   text: string;
@@ -35,6 +42,11 @@ type Card = {
   figures?: Figure[];
   notes?: string[];
   read_as?: ReadAs;
+  // the welcome card's fixed text and its example questions
+  intro?: string;
+  try?: string;
+  examples?: string[];
+  footer?: string;
 };
 type ReadAs = {
   companies: { symbol: string; name_en: string; name_ar: string }[];
@@ -47,6 +59,10 @@ type ReadAs = {
 type JobView = { id: string; status: "running" | "done"; question: string; steps: string[]; seconds: number; card?: Card };
 type Failure = "host" | "csrf" | "signed_out" | "off" | "busy" | "invalid" | "rate_limited" | "lost" | "unreachable" | "slow" | "server" | "too_long";
 type Exchange = { q: string; job?: JobView; card?: Card; failed?: Failure; replay?: boolean };
+// one conversation: the thread since "New question"
+type Conversation = { key: string; at: string; thread: Exchange[] };
+let conversations = 0;
+const newKey = () => `c${++conversations}`;
 
 const ARABIC = /[؀-ۿ]/;
 // an Arabic question gets an Arabic answer, right to left, whatever the page's language
@@ -155,7 +171,8 @@ export function Chat({ me }: { me: Me }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [statusFailed, setStatusFailed] = useState<Failure | null>(null);
   const [thread, setThread] = useState<Exchange[]>([]);
-  const [past, setPast] = useState<{ q: string; at: string }[]>([]);
+  const [convs, setConvs] = useState<Conversation[]>([]);
+  const [current, setCurrent] = useState(newKey);
   const [drawer, setDrawer] = useState(false);
   const [src, setSrc] = useState<{ row: FactRow; item: string } | null>(null);
   const [q, setQ] = useState(params.get("q") ?? "");
@@ -170,6 +187,22 @@ export function Chat({ me }: { me: Me }) {
       .catch((e) => setStatusFailed(failureOf(e)));
   }
   useEffect(loadStatus, []);
+
+  // the conversation is listed as soon as its first question is asked, and kept up to date
+  useEffect(() => {
+    if (!thread.some((x) => x.q)) return;
+    setConvs((cs) =>
+      cs.some((c) => c.key === current)
+        ? cs.map((c) => (c.key === current ? { ...c, thread } : c))
+        : [{ key: current, at: todayIso(), thread }, ...cs],
+    );
+  }, [thread, current]);
+  function startConversation(c?: Conversation) {
+    setThread(c ? c.thread : []);
+    setCurrent(c ? c.key : newKey());
+    setQ("");
+    setDrawer(false);
+  }
 
   // a new answer scrolls the thread, never the page
   const threadRef = useRef<HTMLDivElement>(null);
@@ -218,11 +251,13 @@ export function Chat({ me }: { me: Me }) {
   }
   async function ask(question: string, replay?: string) {
     const i = thread.length;
+    // a follow-up: the conversation's last question that got a card
+    const last = [...thread].reverse().find((x) => x.job && x.card);
     setThread((th) => [...th, { q: question, replay: Boolean(replay) }]);
     try {
-      const job = await post<JobView>("/chat/ask", replay ? { replay: Number(replay) } : { question });
+      const body = replay ? { replay: Number(replay) } : last?.job ? { question, follows: last.job.id } : { question };
+      const job = await post<JobView>("/chat/ask", body);
       update(i, { q: job.question, job });
-      setPast((p) => [{ q: job.question, at: todayIso() }, ...p]);
       follow(i, job);
     } catch (e) {
       if (e instanceof ApiError && e.status === 403 && e.code !== "csrf") loadStatus();
@@ -251,11 +286,11 @@ export function Chat({ me }: { me: Me }) {
 
   const on = Boolean(status?.on);
   const isOwner = me.role === "owner";
-  const groups = past.reduce<{ label: string; items: string[] }[]>((acc, p) => {
-    const label = p.at === todayIso() ? t.today : day(p.at, lang);
+  const groups = convs.reduce<{ label: string; items: Conversation[] }[]>((acc, c) => {
+    const label = c.at === todayIso() ? t.today : day(c.at, lang);
     const g = acc.find((x) => x.label === label);
-    if (g) g.items.push(p.q);
-    else acc.push({ label, items: [p.q] });
+    if (g) g.items.push(c);
+    else acc.push({ label, items: [c] });
     return acc;
   }, []);
   const off = status && !on ? (OFF[status.why ?? ""] ?? OFF.coming_soon) : null;
@@ -275,11 +310,7 @@ export function Chat({ me }: { me: Me }) {
             className="primary new-q"
             disabled={!on || busy}
             aria-describedby="ask-why"
-            onClick={() => {
-              setThread([]);
-              setQ("");
-              setDrawer(false);
-            }}
+            onClick={() => startConversation()}
           >
             + {t.newQuestion}
           </button>
@@ -292,11 +323,30 @@ export function Chat({ me }: { me: Me }) {
             <section key={g.label}>
               <h3 className="eyebrow">{g.label}</h3>
               <ul>
-                {g.items.map((p, i) => (
-                  <li key={i} dir="auto" lang={answerLang(p)} data-allow-en={answerLang(p) === "en" ? "" : undefined}>
-                    {p}
-                  </li>
-                ))}
+                {g.items.map((c) => {
+                  const asked = c.thread.filter((x) => x.q);
+                  const first = asked[0]?.q ?? "";
+                  const more = asked.length - 1;
+                  return (
+                    <li key={c.key} lang={answerLang(first)} data-allow-en={answerLang(first) === "en" ? "" : undefined}>
+                      <button
+                        type="button"
+                        className="past-q"
+                        dir="auto"
+                        aria-current={c.key === current ? "true" : undefined}
+                        disabled={busy}
+                        onClick={() => startConversation(c)}
+                      >
+                        {first}
+                        {more > 0 && (
+                          <span className="small muted past-more" lang={lang}>
+                            {ar ? ` (+${more} متابعة)` : ` (+${more} follow-up${more > 1 ? "s" : ""})`}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ))
@@ -389,6 +439,7 @@ export function Chat({ me }: { me: Me }) {
                     canMarket={Boolean(me.can_see_sahmk)}
                     onSource={(row, item) => setSrc({ row, item })}
                     onRetry={x.replay ? undefined : () => ask(x.q)}
+                    onAsk={on && !busy ? (example) => ask(example) : undefined}
                   />
                 ) : (
                   <Progress job={x.job} />
@@ -601,15 +652,47 @@ function ChatCard({
   canMarket,
   onSource,
   onRetry,
+  onAsk,
 }: {
   card: Card;
   canMarket: boolean;
   onSource: (row: FactRow, item: string) => void;
   onRetry?: () => void;
+  onAsk?: (question: string) => void;
 }) {
   const ar = card.lang === "ar";
   const dir = ar ? "rtl" : "ltr";
   const allow = ar ? undefined : "";
+  if (card.kind === "welcome") {
+    // a greeting, thanks or a request for help: Spear's fixed text, no model request
+    return (
+      <article className="card answer welcome-card" dir={dir} lang={card.lang} data-allow-en={allow}>
+        <p className="answer-text">{card.intro}</p>
+        {(card.examples ?? []).length > 0 && (
+          <>
+            <div className="eyebrow">{card.try}</div>
+            <ul className="examples">
+              {(card.examples ?? []).map((e) => (
+                <li key={e}>
+                  <button type="button" className="example-q" disabled={!onAsk} onClick={() => onAsk?.(e)}>
+                    {e}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        <p className="small muted" style={{ margin: "8px 0 0" }}>
+          {card.footer}
+        </p>
+        {canMarket && (
+          <Link className="btn" to="/market">
+            {ar ? "صفحة السوق" : "Market page"}
+          </Link>
+        )}
+      </article>
+    );
+  }
   if (card.kind === "not_answered") {
     return (
       <div dir={dir} lang={card.lang} className="answer-slot" data-allow-en={allow}>
