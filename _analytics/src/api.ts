@@ -110,19 +110,49 @@ export async function get<T = any>(path: string): Promise<T> {
   return parse<T>(await raw(path));
 }
 
-export async function post<T = any>(path: string, data: unknown = {}): Promise<T> {
+// Django's CSRF check refused the request: the server's JSON "csrf" error, or (from a server
+// before 27 Nov 2026) Django's own HTML 403 page. The view never ran, so sending it again is safe.
+async function csrfRefused(r: Response): Promise<boolean> {
+  if (r.status !== 403) return false;
+  if (!(r.headers.get("content-type") ?? "").includes("application/json")) return true;
+  const body = await r.clone().json().catch(() => ({}));
+  return body.error === "csrf";
+}
+
+async function send(path: string, data: unknown): Promise<Response> {
   const t = await token();
-  const r = await raw(path, {
+  return raw(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": t },
     body: JSON.stringify(data),
   });
+}
+
+// Every change carries the session's CSRF token. Signing in replaces it (Django), so the sign-in
+// screen fetches a fresh one at once (refreshCsrf); and a request the CSRF check refuses is sent
+// once more with a fresh token before the page shows the security-check message (Mo, 27 Nov 2026).
+export async function post<T = any>(path: string, data: unknown = {}): Promise<T> {
+  let r = await send(path, data);
+  if (await csrfRefused(r)) {
+    csrf = null;
+    r = await send(path, data);
+    if (await csrfRefused(r)) {
+      csrf = null;
+      throw new ApiError(403, "csrf", "The page's security token was out of date. Try again.");
+    }
+  }
   if (r.status === 403) csrf = null; // a new session needs a new token
   return parse<T>(r);
 }
 
 export function resetCsrf() {
   csrf = null;
+}
+
+// after signing in: the token from before is no longer valid; fetch the new one now
+export async function refreshCsrf(): Promise<void> {
+  csrf = null;
+  await token();
 }
 
 function kindOf(status: number): string {
